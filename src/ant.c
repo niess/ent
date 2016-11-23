@@ -26,7 +26,25 @@
 /* The ANT API. */
 #include "ant.h"
 
-/* Container for reading data from a text file. */
+/* The nucleon mass, in GeV/c^2. */
+#define ANT_MASS_NUCLEON 0.931494
+/* The W boson mass, in GeV/c^2. */
+#define ANT_MASS_W 80.385
+/* The Z boson mass, in GeV/c^2. */
+#define ANT_MASS_Z 91.1876
+/* The Fermi coupling constant GF/(hbar*c)^3, in GeV^-2. */
+#define ANT_PHYS_GF 1.1663787E-05
+/* The Planck constant as hbar*c, in GeV * m. */
+#define ANT_PHYS_HBC 1.97326978E-16
+/* The Weinberg angle at MZ, as sin(theta_W)^2. */
+#define ANT_PHYS_SIN_THETA_W_2 0.231295
+
+#ifndef M_PI
+/* Define pi, if unknown. */
+#define M_PI 3.14159265358979323846
+#endif
+
+/* Buffer for reading data from a text file. */
 struct file_buffer {
         jmp_buf env;
         FILE * stream;
@@ -41,14 +59,14 @@ struct file_buffer {
 
 /* Create a new file buffer */
 static enum ant_return file_buffer_create(
-        struct file_buffer ** buffer, FILE * stream, jmp_buf env)
+    struct file_buffer ** buffer, FILE * stream, jmp_buf env)
 {
         if ((*buffer = malloc(FILE_BLOCK_SIZE)) == NULL)
                 return ANT_RETURN_MEMORY_ERROR;
         memcpy((*buffer)->env, env, sizeof(jmp_buf));
         (*buffer)->stream = stream;
         (*buffer)->code = ANT_RETURN_SUCCESS;
-        (*buffer)->size = FILE_BLOCK_SIZE-sizeof(**buffer);
+        (*buffer)->size = FILE_BLOCK_SIZE - sizeof(**buffer);
         (*buffer)->cursor = NULL;
 
         return ANT_RETURN_SUCCESS;
@@ -61,7 +79,7 @@ static void file_raise_error(struct file_buffer * buffer, enum ant_return code)
         longjmp(buffer->env, 1);
 }
 
-/* Utility functions for reading a line from a file. */
+/* Load next line from file to buffer. */
 static enum ant_return file_get_line_(struct file_buffer ** buffer, int skip)
 {
         /* Get a new line. */
@@ -70,21 +88,21 @@ static enum ant_return file_get_line_(struct file_buffer ** buffer, int skip)
         for (; skip >= 0; skip--) {
                 for (;;) {
                         const char check = 0x1;
-                        ptr[size-1] = check;
+                        ptr[size - 1] = check;
                         if (fgets(ptr, size, (*buffer)->stream) == NULL)
                                 return ANT_RETURN_IO_ERROR;
 
                         /* Check that no overflow occured. */
-                        if (ptr[size-1] == check) break;
+                        if (ptr[size - 1] == check) break;
 
                         /* Get more memory then ... */
-                        void * tmp = realloc(*buffer, (*buffer)->size +
-                            FILE_BLOCK_SIZE);
+                        void * tmp =
+                            realloc(*buffer, (*buffer)->size + FILE_BLOCK_SIZE);
                         if (tmp == NULL) return ANT_RETURN_MEMORY_ERROR;
                         *buffer = tmp;
                         (*buffer)->size += FILE_BLOCK_SIZE;
-                        size = FILE_BLOCK_SIZE+1;
-                        ptr += size-1;
+                        size = FILE_BLOCK_SIZE + 1;
+                        ptr += size - 1;
                 }
         }
 
@@ -102,10 +120,10 @@ static void file_get_line(struct file_buffer ** buffer, int skip)
                 file_raise_error(*buffer, rc);
 }
 
-/* Utility function for getting the next word in the buffer.
+/* Locate the next word in the file buffer.
  *
  * __Warning__ : the word is stripped from trailling spaces. That for the
- * input buffer data are modified.
+ * input buffer is modified.
  */
 static void file_get_word(struct file_buffer * buffer, int skip)
 {
@@ -114,12 +132,15 @@ static void file_get_word(struct file_buffer * buffer, int skip)
         for (p = buffer->cursor; *p != 0x0; p++) {
                 if (*p == ' ') {
                         p++;
-                        for (; *p == ' '; p++) ;
-                        if (*p == 0x0) file_raise_error(buffer,
-                            ANT_RETURN_FORMAT_ERROR);
+                        for (; *p == ' '; p++)
+                                ;
+                        if (*p == 0x0)
+                                file_raise_error(
+                                    buffer, ANT_RETURN_FORMAT_ERROR);
                         if (skip-- <= 0) {
                                 char * q;
-                                for (q = p; (*q != ' ') && (*q != 0x0); q++) ;
+                                for (q = p; (*q != ' ') && (*q != 0x0); q++)
+                                        ;
                                 *q = 0x0;
                                 buffer->cursor = p;
                                 return;
@@ -131,7 +152,7 @@ static void file_get_word(struct file_buffer * buffer, int skip)
         file_raise_error(buffer, ANT_RETURN_FORMAT_ERROR);
 }
 
-/* Utility functions for parsing the next float in the buffer. */
+/* Parse the next float in the buffer. */
 static enum ant_return file_get_float_(struct file_buffer * buffer, float * f)
 {
         char * endptr;
@@ -150,7 +171,7 @@ static float file_get_float(struct file_buffer * buffer)
         return f;
 }
 
-/* Utility function for parsing a table. */
+/* Parse a table of floats from an opened file using a buffer. */
 static void file_get_table(
     struct file_buffer ** buffer, int size, float * table)
 {
@@ -160,12 +181,11 @@ static void file_get_table(
                 if ((rc = file_get_float_(*buffer, table)) !=
                     ANT_RETURN_SUCCESS) {
                         if (failed) file_raise_error(*buffer, rc);
-                        if ((rc = file_get_line_(buffer, 0))
-                            != ANT_RETURN_SUCCESS)
+                        if ((rc = file_get_line_(buffer, 0)) !=
+                            ANT_RETURN_SUCCESS)
                                 file_raise_error(*buffer, rc);
                         failed = 1;
-                }
-                else {
+                } else {
                         failed = 0;
                         n++;
                         table++;
@@ -183,31 +203,33 @@ static int memory_padded_size(int size, int pad_size)
 {
         int i = size / pad_size;
         if ((size % pad_size) != 0) i++;
-        return i*pad_size;
+        return i * pad_size;
 }
 
+/* Convert Lambda_{QCD} to alpha_S. */
 static double qcd_lambda_to_alpha(
     unsigned int order, unsigned int nf, double q, double lambda)
 {
         const double b0 = 11. - 2. / 3. * nf;
         const double t = log(q / lambda);
-        double alpha = 1./(b0 * t);
+        double alpha = 1. / (b0 * t);
 
-        if(order <= 1) return alpha; /* LO. */
+        if (order <= 1) return alpha; /* LO. */
 
         /* NLO. */
         const double b1 = 51. - 19. / 3. * nf;
-        return alpha*(1. - b1 / b0 * alpha * log(2. * t));
+        return alpha * (1. - b1 / b0 * alpha * log(2. * t));
 }
 
+/* Convert alpha_S to Lambda_{QCD}. */
 static double qcd_alpha_to_lambda(
-        unsigned int order, unsigned int nf, double alpha, double q)
+    unsigned int order, unsigned int nf, double alpha, double q)
 {
         double b0 = 11. - 2. / 3. * nf;
-        double t = 1./(b0 * alpha);
+        double t = 1. / (b0 * alpha);
 
         /* LO. */
-        if(order <= 1) return q * exp(-t);
+        if (order <= 1) return q * exp(-t);
 
         /* NLO. */
         const double br = (51. - 19. / 3. * nf) / (b0 * b0);
@@ -219,13 +241,18 @@ static double qcd_alpha_to_lambda(
                 as0 = (1. - br * lt) / (b0 * t);
                 as1 = (-1. - br * (1. / t - 2. * lt)) / (b0 * t * t);
                 t += (alpha - as0) / as1;
-        }
-        while(fabs(ot - t) / ot > 1E-05);
+        } while (fabs(ot - t) / ot > 1E-05);
         return q * exp(-t);
 }
 
-/* Container for PDFs in .tbl format. */
-struct tbl_pdf {
+/* Container for CTEQ PDFs in .tbl or .pds format.
+ *
+ * The `cteq_` data types and functions have been adapted from file cteqpdf.c
+ * from Zoltan Nagy's CTEQ PDF library. Check the following for the original
+ * code :
+ *      http://www.desy.de/~znagy/Site/CTEQ_PDF.html.
+ */
+struct cteq_pdf {
         /* The name of the PDF table. */
         char * name;
 
@@ -237,11 +264,13 @@ struct tbl_pdf {
         double mass[7];
         /* Number of active flavours. */
         unsigned int nfmx;
+        /* Maximum number of values? */
+        unsigned int mxval;
         /*  Qini, Qmax, xmin  */
         double qini, qmax, xmin;
         /* xv, tv arrays and the pdf grid */
         unsigned int nx, nt;
-        float * xv, * xvpow, * tv, * upd;
+        float *xv, *xvpow, *tv, *upd;
 
         /* Placeholder for variable size data. */
         char data[];
@@ -250,16 +279,12 @@ struct tbl_pdf {
 /* Exponent for CTEQ PDFs. */
 #define CTEQ_XPOW 0.3
 
-/* Load PDFs from a .tbl file.
- *
- * Adapted from file cteqpdf.c from Zoltan Nagy's CTEQ PDF library. See :
- *      http://www.desy.de/~znagy/Site/CTEQ_PDF.html.
- */
-static enum ant_return tbl_load(FILE * stream, struct tbl_pdf ** pdf)
+/* Load PDFs from a .tbl file. */
+static enum ant_return tbl_load(FILE * stream, struct cteq_pdf ** pdf)
 {
         *pdf = NULL;
         enum ant_return rc;
-        struct tbl_pdf header;
+        struct cteq_pdf header;
         struct file_buffer * buffer = NULL;
         memset(&header, 0x0, sizeof(header));
 
@@ -271,8 +296,8 @@ static enum ant_return tbl_load(FILE * stream, struct tbl_pdf ** pdf)
         }
 
         /* Create the temporary file buffer. */
-        if ((rc = file_buffer_create(&buffer, stream, env))
-            != ANT_RETURN_SUCCESS)
+        if ((rc = file_buffer_create(&buffer, stream, env)) !=
+            ANT_RETURN_SUCCESS)
                 goto exit;
 
         /* Parse the table name length. */
@@ -294,29 +319,31 @@ static enum ant_return tbl_load(FILE * stream, struct tbl_pdf ** pdf)
         header.nx = file_get_float(buffer);
         header.nt = file_get_float(buffer);
         header.nfmx = file_get_float(buffer);
+        header.mxval = 2;
 
         /* Allocate and map the memory for the tables. */
-        const unsigned int n_upd = (header.nx+1)*(header.nt+1)*(header.nfmx+3);
-        const unsigned int size_upd = memory_padded_size(n_upd * sizeof(float),
-            sizeof(double));
-        const unsigned int size_x = memory_padded_size((header.nx+1) *
-            sizeof(float), sizeof(double));
-        const unsigned int size_t = memory_padded_size((header.nt+1) *
-            sizeof(float), sizeof(double));
-        const unsigned int size_name = memory_padded_size(name_length + 1,
-            sizeof(double));
-        const unsigned int size = sizeof(header)+size_name+2*size_x+size_t+
-            size_upd;
+        const unsigned int n_upd = (header.nx + 1) * (header.nt + 1) *
+            (header.nfmx + 1 + header.mxval);
+        const unsigned int size_upd =
+            memory_padded_size(n_upd * sizeof(float), sizeof(double));
+        const unsigned int size_x =
+            memory_padded_size((header.nx + 1) * sizeof(float), sizeof(double));
+        const unsigned int size_t =
+            memory_padded_size((header.nt + 1) * sizeof(float), sizeof(double));
+        const unsigned int size_name =
+            memory_padded_size(name_length + 1, sizeof(double));
+        const unsigned int size =
+            sizeof(header) + size_name + 2 * size_x + size_t + size_upd;
         if ((*pdf = malloc(size)) == NULL) {
                 rc = ANT_RETURN_MEMORY_ERROR;
                 goto exit;
         }
         memcpy(*pdf, &header, sizeof(header));
         (*pdf)->name = (*pdf)->data;
-        (*pdf)->xv = (float *)((char *)((*pdf)->name)+size_name);
-        (*pdf)->xvpow = (float *)((char *)((*pdf)->xv)+size_x);
-        (*pdf)->tv = (float *)((char *)((*pdf)->xvpow)+size_x);
-        (*pdf)->upd = (float *)((char *)((*pdf)->tv)+size_t);
+        (*pdf)->xv = (float *)((char *)((*pdf)->name) + size_name);
+        (*pdf)->xvpow = (float *)((char *)((*pdf)->xv) + size_x);
+        (*pdf)->tv = (float *)((char *)((*pdf)->xvpow) + size_x);
+        (*pdf)->upd = (float *)((char *)((*pdf)->tv) + size_t);
 
         /* Read Qinit and Qmax. */
         file_get_line(&buffer, 1);
@@ -325,10 +352,10 @@ static enum ant_return tbl_load(FILE * stream, struct tbl_pdf ** pdf)
 
         /* Read the q values and convert them to t. */
         file_get_line(&buffer, 0);
-        file_get_table(&buffer, (*pdf)->nt+1, (*pdf)->tv);
-        for (i = 0; i < (*pdf)->nt+1; i++)
-                (*pdf)->tv[i] = log(log((*pdf)->tv[i] /
-                    (*pdf)->lambda[(*pdf)->nf]));
+        file_get_table(&buffer, (*pdf)->nt + 1, (*pdf)->tv);
+        for (i = 0; i < (*pdf)->nt + 1; i++)
+                (*pdf)->tv[i] =
+                    log(log((*pdf)->tv[i] / (*pdf)->lambda[(*pdf)->nf]));
 
         /* Read xmin. */
         file_get_line(&buffer, 1);
@@ -338,12 +365,12 @@ static enum ant_return tbl_load(FILE * stream, struct tbl_pdf ** pdf)
 
         /* Read the x table. */
         (*pdf)->xv[0] = 0.;
-        file_get_table(&buffer, (*pdf)->nx, (*pdf)->xv+1);
+        file_get_table(&buffer, (*pdf)->nx, (*pdf)->xv + 1);
 
         /* Compute the xvpow values. */
         (*pdf)->xvpow[0] = 0.;
-        for(i = 1; i <= (*pdf)->nx; i++) (*pdf)->xvpow[i] = pow((*pdf)->xv[i],
-            CTEQ_XPOW);
+        for (i = 1; i <= (*pdf)->nx; i++)
+                (*pdf)->xvpow[i] = pow((*pdf)->xv[i], CTEQ_XPOW);
 
         /* Read the grid. */
         file_get_line(&buffer, 1);
@@ -353,26 +380,26 @@ static enum ant_return tbl_load(FILE * stream, struct tbl_pdf ** pdf)
         double as;
         unsigned int nf;
 
-        for (nf = (*pdf)->nf+1; nf <= 6; nf++) {
-                as = qcd_lambda_to_alpha((*pdf)->order, nf-1,
-                    (*pdf)->mass[nf], (*pdf)->lambda[nf-1]);
-                (*pdf)->lambda[nf] = qcd_alpha_to_lambda((*pdf)->order, nf, as,
-                    (*pdf)->mass[nf]);
+        for (nf = (*pdf)->nf + 1; nf <= 6; nf++) {
+                as = qcd_lambda_to_alpha((*pdf)->order, nf - 1,
+                    (*pdf)->mass[nf], (*pdf)->lambda[nf - 1]);
+                (*pdf)->lambda[nf] = qcd_alpha_to_lambda(
+                    (*pdf)->order, nf, as, (*pdf)->mass[nf]);
         }
 
         /* Under the charm mass every quark is considered as massless. */
-        for (nf = (*pdf)->nf-1; nf > 2; nf--) {
-                as = qcd_lambda_to_alpha((*pdf)->order, nf+1,
-                    (*pdf)->mass[nf+1], (*pdf)->lambda[nf+1]);
-                (*pdf)->lambda[nf] = qcd_alpha_to_lambda((*pdf)->order, nf, as,
-                    (*pdf)->mass[nf+1]);
+        for (nf = (*pdf)->nf - 1; nf > 2; nf--) {
+                as = qcd_lambda_to_alpha((*pdf)->order, nf + 1,
+                    (*pdf)->mass[nf + 1], (*pdf)->lambda[nf + 1]);
+                (*pdf)->lambda[nf] = qcd_alpha_to_lambda(
+                    (*pdf)->order, nf, as, (*pdf)->mass[nf + 1]);
         }
 
         /* Roll back and copy the table name. */
         rewind(stream);
         file_get_line(&buffer, 0);
         file_get_word(buffer, 4);
-        memcpy((*pdf)->name, buffer->cursor, name_length+1);
+        memcpy((*pdf)->name, buffer->cursor, name_length + 1);
 
 exit:
         free(buffer);
@@ -381,6 +408,183 @@ exit:
                 *pdf = NULL;
         }
         return rc;
+}
+
+/* TODO: poorly optimised. */
+static double cteq_polint4f(float * xa, float * ya, double x)
+{
+        const double h1 = xa[0] - x;
+        const double h2 = xa[1] - x;
+        const double h3 = xa[2] - x;
+        const double h4 = xa[3] - x;
+
+        const double tmp1 = (ya[1] - ya[0]) / (h1 - h2);
+        const double d1 = h2 * tmp1;
+        const double c1 = h1 * tmp1;
+
+        const double tmp2 = (ya[2] - ya[1]) / (h2 - h3);
+        const double d2 = h3 * tmp2;
+        const double c2 = h2 * tmp2;
+
+        const double tmp3 = (ya[3] - ya[2]) / (h3 - h4);
+        const double d3 = h4 * tmp3;
+        const double c3 = h3 * tmp3;
+
+        const double tmp4 = (c2 - d1) / (h1 - h3);
+        const double cd1 = h3 * tmp4;
+        const double cc1 = h1 * tmp4;
+
+        const double tmp5 = (c3 - d2) / (h2 - h4);
+        const double cd2 = h4 * tmp5;
+        const double cc2 = h2 * tmp5;
+
+        const double tmp6 = (cc2 - cd1) / (h1 - h4);
+        const double dd1 = h4 * tmp6;
+        const double dc1 = h1 * tmp6;
+
+        if (h3 + h4 < 0.0)
+                return ya[3] + d3 + cd2 + dd1;
+        else if (h2 + h3 < 0.0)
+                return ya[2] + d2 + cd1 + dc1;
+        else if (h1 + h2 < 0.0)
+                return ya[1] + c2 + cd1 + dc1;
+        else
+                return ya[0] + c1 + cc1 + dc1;
+}
+
+static double cteq_pdf_compute(
+    const struct cteq_pdf * pdf, int pid, double x, double q)
+{
+        const double onep = 1.00001;
+        const unsigned int nx = pdf->nx, nq = pdf->nt;
+
+        /* Check the inputs and locate the table indices by dichotomy. */
+        if ((pid != 0) && (q <= pdf->mass[abs(pid)])) return 0.;
+
+        int jlx = -1;
+        int ju = nx + 1;
+        while (ju - jlx > 1) {
+                const int jm = (ju + jlx) / 2;
+                if (x >= pdf->xv[jm])
+                        jlx = jm;
+                else
+                        ju = jm;
+        }
+
+        int jx;
+        if (jlx <= -1)
+                return 0.; /* x < 0. */
+        else if (jlx == 0)
+                jx = 0;
+        else if (jlx <= (int)nx - 2)
+                jx = jlx - 1;
+        else if (jlx == (int)nx - 1 || x < onep)
+                jx = jlx - 2;
+        else
+                return 0.; /* x > 1. */
+
+        const double tt = log(log(q / pdf->lambda[pdf->nf]));
+        int jlq = -1;
+        ju = nq + 1;
+        while (ju - jlq > 1) {
+                const int jm = (ju + jlq) / 2;
+                if (tt >= pdf->tv[jm])
+                        jlq = jm;
+                else
+                        ju = jm;
+        }
+
+        int jq;
+        if (jlq <= 0)
+                jq = 0;
+        else if (jlq <= (int)nq - 2)
+                jq = jlq - 1;
+        else
+                jq = nq - 3;
+
+        /* Get the pdf function values at the lattice points. */
+        const int ip = (pid > (int)pdf->mxval ? -pid : pid);
+        const int jtmp =
+            ((ip + pdf->nfmx) * (nq + 1) + (jq - 1)) * (nx + 1) + jx + 1;
+        const double ss = pow(x, CTEQ_XPOW);
+
+        float fvec[4];
+        if (jx == 0) {
+                float fij[4];
+                int it;
+                for (it = 0; it < 4; ++it) {
+                        const int j1 = jtmp + (it + 1) * (nx + 1);
+                        fij[0] = 0.;
+                        fij[1] = (pdf->upd[j1]) * (pdf->xv[1]) * (pdf->xv[1]);
+                        fij[2] =
+                            (pdf->upd[j1 + 1]) * (pdf->xv[2]) * (pdf->xv[2]);
+                        fij[3] =
+                            (pdf->upd[j1 + 2]) * (pdf->xv[3]) * (pdf->xv[3]);
+
+                        fvec[it] = cteq_polint4f(pdf->xvpow, fij, ss) / (x * x);
+                }
+        } else if (jlx == nx - 1) {
+                int it;
+                for (it = 0; it < 4; ++it)
+                        fvec[it] = cteq_polint4f(pdf->xvpow + nx - 3,
+                            pdf->upd + jtmp + (it + 1) * (nx + 1) - 1, ss);
+        } else {
+                const float * const svec = pdf->xvpow + jx - 1;
+                const double s12 = svec[1] - svec[2];
+                const double s13 = svec[1] - svec[3];
+                const double s23 = svec[2] - svec[3];
+                const double s24 = svec[2] - svec[4];
+                const double s34 = svec[3] - svec[4];
+                const double sy2 = ss - svec[2];
+                const double sy3 = ss - svec[3];
+                const double const1 = s13 / s23;
+                const double const2 = s12 / s23;
+                const double const3 = s34 / s23;
+                const double const4 = s24 / s23;
+                const double s1213 = s12 + s13;
+                const double s2434 = s24 + s34;
+                const double sdet = s12 * s34 - s1213 * s2434;
+                const double tmp = sy2 * sy3 / sdet;
+                const double const5 = (s34 * sy2 - s2434 * sy3) * tmp / s12;
+                const double const6 = (s1213 * sy2 - s12 * sy3) * tmp / s34;
+
+                int it;
+                for (it = 0; it < 4; ++it) {
+                        const int j1 = jtmp + (it + 1) * (nx + 1);
+                        const double sf2 = pdf->upd[j1];
+                        const double sf3 = pdf->upd[j1 + 1];
+                        const double g1 = sf2 * const1 - sf3 * const2;
+                        const double g4 = sf3 * const4 - sf2 * const3;
+                        fvec[it] = (const5 * (pdf->upd[j1 - 1] - g1) +
+                                       const6 * (pdf->upd[j1 + 2] - g4) +
+                                       sf2 * sy3 - sf3 * sy2) /
+                            s23;
+                }
+        }
+
+        /* Interpolate in t. */
+        if (jlq <= 0)
+                return cteq_polint4f(pdf->tv, fvec, tt);
+        else if (jlq >= nq - 1)
+                return cteq_polint4f(pdf->tv + nq - 3, fvec, tt);
+
+        const float * const tvec = pdf->tv + jq - 1;
+        const double t12 = tvec[1] - tvec[2];
+        const double t13 = tvec[1] - tvec[3];
+        const double t23 = tvec[2] - tvec[3];
+        const double t24 = tvec[2] - tvec[4];
+        const double t34 = tvec[3] - tvec[4];
+        const double ty2 = tt - tvec[2];
+        const double ty3 = tt - tvec[3];
+        const double tmp1 = t12 + t13;
+        const double tmp2 = t24 + t34;
+        const double tdet = t12 * t34 - tmp1 * tmp2;
+        const double g1 = (fvec[1] * t13 - fvec[2] * t12) / t23;
+        const double g4 = (fvec[2] * t24 - fvec[1] * t34) / t23;
+        const double h00 = (t34 * ty2 - tmp2 * ty3) * (fvec[0] - g1) / t12 +
+            (tmp1 * ty2 - t12 * ty3) * (fvec[3] - g4) / t34;
+
+        return (h00 * ty2 * ty3 / tdet + fvec[1] * ty3 - fvec[2] * ty2) / t23;
 }
 
 #undef CTEQ_XPOW /* No more needed. */
@@ -394,9 +598,8 @@ enum ant_return ant_dcs_create(const char * data, struct ant_dcs ** dcs)
         rc = ANT_RETURN_PATH_ERROR;
         if ((stream = fopen(data, "r")) == NULL) goto exit;
 
-        struct tbl_pdf * pdf;
-        if ((rc = tbl_load(stream, &pdf)) != ANT_RETURN_SUCCESS)
-                goto exit;
+        struct cteq_pdf * pdf;
+        if ((rc = tbl_load(stream, &pdf)) != ANT_RETURN_SUCCESS) goto exit;
         *dcs = (struct ant_dcs *)pdf;
         rc = ANT_RETURN_SUCCESS;
 
@@ -411,4 +614,84 @@ void ant_dcs_destroy(struct ant_dcs ** dcs)
 
         free(*dcs);
         *dcs = NULL;
+}
+
+/* Compute the DCS. */
+enum ant_return ant_dcs_compute(struct ant_dcs * dcs,
+    enum ant_projectile projectile, double energy, double Z, double A,
+    enum ant_process process, double x, double y, double * value)
+{
+        /* Check the inputs. */
+        *value = 0.;
+        if ((x > 1.) || (x < 0.) || (y > 1.) || (y < 0.))
+                return ANT_RETURN_DOMAIN_ERROR;
+
+        /* Compute the PDF. */
+        const double Q2 = 2. * x * y * ANT_MASS_NUCLEON * energy;
+        const double q = sqrt(Q2);
+        struct cteq_pdf * pdf = (struct cteq_pdf *)dcs;
+        int eps = (projectile <= ANT_PROJECTILE_NU_TAU) ? 1 : -1; /* CP? */
+        const double N = A - Z; /* Number of neutrons. */
+        double factor;
+        if (process == ANT_PROCESS_CC) {
+                const double d =
+                    (Z <= 0.) ? 0. : cteq_pdf_compute(pdf, 1 * eps, x, q);
+                const double u =
+                    (N <= 0.) ? 0. : cteq_pdf_compute(pdf, 2 * eps, x, q);
+                const double s = cteq_pdf_compute(pdf, 3 * eps, x, q);
+                const double b = cteq_pdf_compute(pdf, 5 * eps, x, q);
+                const double F1 = Z * d + N * u + A * (s + b);
+
+                const double dbar =
+                    (N <= 0.) ? 0. : cteq_pdf_compute(pdf, -1 * eps, x, q);
+                const double ubar =
+                    (Z <= 0.) ? 0. : cteq_pdf_compute(pdf, -2 * eps, x, q);
+                const double cbar = cteq_pdf_compute(pdf, -4 * eps, x, q);
+                const double F2 = N * dbar + Z * ubar + A * cbar;
+
+                const double y1 = 1. - y;
+                const double F = F1 + F2 * y1 * y1;
+                const double MW2 = ANT_MASS_W * ANT_MASS_W;
+                const double r = MW2 / (MW2 + Q2);
+                factor = 2 * F * r * r;
+        } else if (process == ANT_PROCESS_NC) {
+                const double d = cteq_pdf_compute(pdf, 1 * eps, x, q);
+                const double u = cteq_pdf_compute(pdf, 2 * eps, x, q);
+                const double s = cteq_pdf_compute(pdf, 3 * eps, x, q);
+                const double c = cteq_pdf_compute(pdf, 4 * eps, x, q);
+                const double b = cteq_pdf_compute(pdf, 5 * eps, x, q);
+
+                const double s23 = 2. * ANT_PHYS_SIN_THETA_W_2 / 3.;
+                const double gp2 = 1. + 4. * s23 * (s23 - 1.);
+                const double gm2 = 4. * s23 * s23;
+                const double gpp2 = 1. + s23 * (s23 - 2.);
+                const double gpm2 = s23 * s23;
+                const double y1 = 1. - y;
+                const double y12 = y1 * y1;
+                const double F1 = (gp2 + gm2 * y12) * (Z * u + N * d + A * c);
+                const double F2 =
+                    (gpp2 + gpm2 * y12) * (Z * d + N * u + A * (s + b));
+
+                const double dbar = cteq_pdf_compute(pdf, -1 * eps, x, q);
+                const double ubar = cteq_pdf_compute(pdf, -2 * eps, x, q);
+                const double sbar = cteq_pdf_compute(pdf, -3 * eps, x, q);
+                const double cbar = cteq_pdf_compute(pdf, -4 * eps, x, q);
+                const double bbar = cteq_pdf_compute(pdf, -5 * eps, x, q);
+                const double F3 =
+                    (gm2 + gp2 * y12) * (Z * ubar + N * dbar + A * cbar);
+                const double F4 = (gpm2 + gpp2 * y12) *
+                    (Z * dbar + N * ubar + A * (sbar + bbar));
+
+                const double F = F1 + F2 + F3 + F4;
+                const double MZ2 = ANT_MASS_Z * ANT_MASS_Z;
+                const double r = MZ2 / (MZ2 + Q2);
+                factor = 0.5 * F * r * r;
+        } else
+                return ANT_RETURN_DOMAIN_ERROR;
+
+        /* Compute the DCS. */
+        *value = energy * x * factor * (ANT_PHYS_GF * ANT_PHYS_HBC) *
+            (ANT_PHYS_GF * ANT_PHYS_HBC) * ANT_MASS_NUCLEON / M_PI;
+
+        return ANT_RETURN_SUCCESS;
 }

@@ -45,8 +45,40 @@ enum ant_return {
         ANT_RETURN_MEMORY_ERROR,
         /** Some file couldn't be found. */
         ANT_RETURN_PATH_ERROR,
-        /** Reference to an unknown model. */
+        /** The number of return codes. */
         ANT_N_RETURNS
+};
+
+/**
+ *  Projectiles, i.e. neutrinos flavours.
+ */
+enum ant_projectile {
+        /** The electron neutrino. */
+        ANT_PROJECTILE_NU_E = 0,
+        /** The muon neutrino. */
+        ANT_PROJECTILE_NU_MU,
+        /** The tau neutrino. */
+        ANT_PROJECTILE_NU_TAU,
+        /** The electron anti-neutrino. */
+        ANT_PROJECTILE_NU_E_BAR,
+        /** The muon anti-neutrino. */
+        ANT_PROJECTILE_NU_MU_BAR,
+        /** The tau anti-neutrino. */
+        ANT_PROJECTILE_NU_TAU_BAR,
+        /* The number of projectiles. */
+        ANT_N_PROJECTILES
+};
+
+/**
+ *  Neutrino interaction processes.
+ */
+enum ant_process {
+        /** The charged current DIS process. */
+        ANT_PROCESS_CC = 0,
+        /** The neutral current DIS process. */
+        ANT_PROCESS_NC,
+        /* The number of processes. */
+        ANT_N_PROCESSES
 };
 
 /**
@@ -93,6 +125,26 @@ enum ant_return ant_dcs_create(const char * data, struct ant_dcs ** dcs);
 void ant_dcs_destroy(struct ant_dcs ** dcs);
 
 /**
+ * Compute the DCS.
+ *
+ * @param dcs           A handle for the DCS set.
+ * @param projectile    The incoming projectile.
+ * @param energy        The projectile total energy.
+ * @param Z             The target charge number.
+ * @param A             The target atomic mass number.
+ * @param process       The interaction process.
+ * @param x             The Bjorken _x_ fraction.
+ * @param y             The energy loss fraction.
+ * @param value         The coresponding DCS.
+ *
+ * Compute the DCS for the given projectile incoming on a target (Z, A) at
+ * rest. For an isoscalar nucleon set `Z = 0.5` and `A = 1`.
+ */
+enum ant_return ant_dcs_compute(struct ant_dcs * dcs,
+    enum ant_projectile projectile, double energy, double Z, double A,
+    enum ant_process process, double x, double y, double * value);
+
+/**
  * Return a string describing a `ant_return` code.
  *
  * @param rc    The return code.
@@ -127,7 +179,7 @@ const char * ant_error_function(ant_function_t * function);
  * parameters allow to control the output's rendering.
  */
 void ant_error_print(FILE * stream, enum ant_return code, ant_function_t caller,
-        const char * tabulation, const char * newline);
+    const char * tabulation, const char * newline);
 
 /**
  * Set or clear the error handler.
