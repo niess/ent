@@ -459,6 +459,7 @@ static double cteq_pdf_compute(
         const unsigned int nx = pdf->nx, nq = pdf->nt;
 
         /* Check the inputs and locate the table indices by dichotomy. */
+        if (q <= pdf->lambda[pdf->nf]) return 0.;
         if ((pid != 0) && (q <= pdf->mass[abs(pid)])) return 0.;
 
         int jlx = -1;
@@ -695,3 +696,31 @@ enum ant_return ant_dcs_compute(struct ant_dcs * dcs,
 
         return ANT_RETURN_SUCCESS;
 }
+
+#if (GDB_MODE)
+/*  For debugging with gdb, on linux. */
+#ifndef __USE_GNU
+#define __USE_GNU
+#endif
+#include <fenv.h>
+
+/* Flag for floating point exceptions. */
+static int fe_status;
+
+/* Library initialisation. */
+void __attribute__((constructor)) __init(void)
+{
+        /* Save the floating points exceptions status and enable them. */
+        fe_status = fegetexcept();
+        feclearexcept(FE_ALL_EXCEPT);
+        feenableexcept(FE_DIVBYZERO | FE_INVALID | FE_OVERFLOW | FE_UNDERFLOW);
+}
+
+/* Library finalisation. */
+void __attribute__((destructor)) __fini(void)
+{
+        /* Restore the floating points exceptions status. */
+        feclearexcept(FE_ALL_EXCEPT);
+        feenableexcept(fe_status);
+}
+#endif
