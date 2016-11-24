@@ -26,12 +26,20 @@
 /* The ANT API. */
 #include "ant.h"
 
+/* The electron mass, in GeV/c^2. */
+#define ANT_MASS_ELECTRON 0.511E-03
+/* The muon mass, in GeV/c^2. */
+#define ANT_MASS_MUON 0.10566
+/* The tau mass, in GeV/c^2. */
+#define ANT_MASS_TAU 1.77682
 /* The nucleon mass, in GeV/c^2. */
 #define ANT_MASS_NUCLEON 0.931494
 /* The W boson mass, in GeV/c^2. */
 #define ANT_MASS_W 80.385
 /* The Z boson mass, in GeV/c^2. */
 #define ANT_MASS_Z 91.1876
+/* The W boson width, in GeV/c^2. */
+#define ANT_WIDTH_W 2.085
 /* The Fermi coupling constant GF/(hbar*c)^3, in GeV^-2. */
 #define ANT_PHYS_GF 1.1663787E-05
 /* The Planck constant as hbar*c, in GeV * m. */
@@ -617,24 +625,20 @@ void ant_dcs_destroy(struct ant_dcs ** dcs)
         *dcs = NULL;
 }
 
-/* Compute the DCS. */
-enum ant_return ant_dcs_compute(struct ant_dcs * dcs,
-    enum ant_projectile projectile, double energy, double Z, double A,
-    enum ant_process process, double x, double y, double * value)
+/* DCS for Deep Inelastic Scattering (DIS). */
+static double dcs_dis(struct ant_dcs * dcs, enum ant_projectile projectile,
+    double energy, double Z, double A, enum ant_process process, double x,
+    double y)
 {
-        /* Check the inputs. */
-        *value = 0.;
-        if ((x > 1.) || (x < 0.) || (y > 1.) || (y < 0.))
-                return ANT_RETURN_DOMAIN_ERROR;
-
         /* Compute the PDF. */
         const double Q2 = 2. * x * y * ANT_MASS_NUCLEON * energy;
         const double q = sqrt(Q2);
         struct cteq_pdf * pdf = (struct cteq_pdf *)dcs;
-        int eps = (projectile <= ANT_PROJECTILE_NU_TAU) ? 1 : -1; /* CP? */
-        const double N = A - Z; /* Number of neutrons. */
+        int eps = (projectile > 0) ? 1 : -1; /* CP? */
+        const double N = A - Z;              /* Number of neutrons. */
         double factor;
-        if (process == ANT_PROCESS_CC) {
+        if (process == ANT_PROCESS_DIS_CC) {
+                /* Charged current DIS process. */
                 const double d =
                     (Z <= 0.) ? 0. : cteq_pdf_compute(pdf, 1 * eps, x, q);
                 const double u =
@@ -655,7 +659,8 @@ enum ant_return ant_dcs_compute(struct ant_dcs * dcs,
                 const double MW2 = ANT_MASS_W * ANT_MASS_W;
                 const double r = MW2 / (MW2 + Q2);
                 factor = 2 * F * r * r;
-        } else if (process == ANT_PROCESS_NC) {
+        } else {
+                /* Neutral current DIS process. */
                 const double d = cteq_pdf_compute(pdf, 1 * eps, x, q);
                 const double u = cteq_pdf_compute(pdf, 2 * eps, x, q);
                 const double s = cteq_pdf_compute(pdf, 3 * eps, x, q);
@@ -687,12 +692,105 @@ enum ant_return ant_dcs_compute(struct ant_dcs * dcs,
                 const double MZ2 = ANT_MASS_Z * ANT_MASS_Z;
                 const double r = MZ2 / (MZ2 + Q2);
                 factor = 0.5 * F * r * r;
-        } else
+        }
+
+        /* Return the DCS. */
+        return energy * x * factor * (ANT_PHYS_GF * ANT_PHYS_HBC) *
+            (ANT_PHYS_GF * ANT_PHYS_HBC) * ANT_MASS_NUCLEON / M_PI;
+}
+
+/* DCS for elastic scattering on electrons. */
+static double dcs_elastic(
+    enum ant_projectile projectile, double energy, double Z, double y)
+{
+        const double R = 2. * ANT_PHYS_SIN_THETA_W_2;
+        const double L = 2. * ANT_PHYS_SIN_THETA_W_2 - 1.;
+        const double MZ2 = ANT_MASS_Z * ANT_MASS_Z;
+        const double rZ = MZ2 / (MZ2 + 2. * ANT_MASS_ELECTRON * energy * y);
+
+        double factor;
+        if (projectile == ANT_PROJECTILE_NU_E_BAR) {
+                const double tmp1 = R * rZ;
+                const double a =
+                    ANT_MASS_W * ANT_MASS_W - 2. * ANT_MASS_ELECTRON * energy;
+                const double b = ANT_WIDTH_W * ANT_MASS_W;
+                const double c = 2. * ANT_MASS_W * ANT_MASS_W / (a * a + b * b);
+                const double d = rZ + c * a;
+                const double e = -c * b;
+                factor = tmp1 * tmp1 + (d * d + e * e) * (1. - y) * (1. - y);
+        } else if (projectile == ANT_PROJECTILE_NU_E) {
+                const double tmp1 = R * (1. - y) * rZ;
+                const double MW2 = ANT_MASS_W * ANT_MASS_W;
+                const double rW =
+                    MW2 / (MW2 + 2. * ANT_MASS_ELECTRON * energy * (1. - y));
+                const double tmp2 = L * rZ + 2. * rW;
+                factor = tmp1 * tmp1 + tmp2 * tmp2;
+        } else {
+                const double tmp = (projectile > 0) ?
+                    (R * R * (1. - y) * (1. - y) + L * L) :
+                    (L * L * (1. - y) * (1. - y) + R * R);
+                factor = tmp * rZ * rZ;
+        }
+
+        return Z * energy * ANT_MASS_ELECTRON * (ANT_PHYS_GF * ANT_PHYS_HBC) *
+            (ANT_PHYS_GF * ANT_PHYS_HBC) * factor / (2 * M_PI);
+}
+
+/* DCS for inelastic scattering on electrons. */
+static double dcs_inverse(enum ant_projectile projectile, double energy,
+    enum ant_process process, double Z, double y)
+{
+        if ((projectile != ANT_PROJECTILE_NU_E_BAR) &&
+            ((projectile != ANT_PROJECTILE_NU_MU) ||
+                (process != ANT_PROCESS_INVERSE_MUON)) &&
+            ((projectile != ANT_PROJECTILE_NU_TAU) ||
+                (process != ANT_PROCESS_INVERSE_TAU)))
+                return 0.;
+
+        const double ml = (process == ANT_PROCESS_INVERSE_MUON) ?
+            ANT_MASS_MUON :
+            ANT_MASS_TAU;
+        const double MW2 = ANT_MASS_W * ANT_MASS_W;
+
+        double factor;
+        if (projectile == ANT_PROJECTILE_NU_E_BAR) {
+                const double a = 1. - 2. * ANT_MASS_ELECTRON * energy / MW2;
+                const double b2 = ANT_WIDTH_W * ANT_WIDTH_W / MW2;
+                factor = (1. - y) * (1. - y) / (a * a + b2);
+        } else {
+                const double tmp =
+                    MW2 / (MW2 + 2. * ANT_MASS_ELECTRON * energy * (1. - y));
+                factor = tmp * tmp;
+        }
+
+        const double r = 1. -
+            (ml * ml - ANT_MASS_ELECTRON * ANT_MASS_ELECTRON) /
+                (2. * ANT_MASS_ELECTRON * energy);
+        return Z * energy * ANT_MASS_ELECTRON * (ANT_PHYS_GF * ANT_PHYS_HBC) *
+            (ANT_PHYS_GF * ANT_PHYS_HBC) * 2. * r * r * factor / M_PI;
+}
+
+/* Generic API function for computing the DCS. */
+enum ant_return ant_dcs_compute(struct ant_dcs * dcs,
+    enum ant_projectile projectile, double energy, double Z, double A,
+    enum ant_process process, double x, double y, double * value)
+{
+        /* Check the inputs. */
+        *value = 0.;
+        if ((x > 1.) || (x < 0.) || (y > 1.) || (y < 0.))
                 return ANT_RETURN_DOMAIN_ERROR;
 
-        /* Compute the DCS. */
-        *value = energy * x * factor * (ANT_PHYS_GF * ANT_PHYS_HBC) *
-            (ANT_PHYS_GF * ANT_PHYS_HBC) * ANT_MASS_NUCLEON / M_PI;
+        /* Compute the corresponding DCS. */
+        if (process == ANT_PROCESS_ELASTIC)
+                *value = dcs_elastic(projectile, energy, Z, y);
+        else if ((process == ANT_PROCESS_DIS_CC) ||
+            (process == ANT_PROCESS_DIS_NC))
+                *value = dcs_dis(dcs, projectile, energy, Z, A, process, x, y);
+        else if ((process == ANT_PROCESS_INVERSE_MUON) ||
+            (process == ANT_PROCESS_INVERSE_TAU))
+                *value = dcs_inverse(projectile, energy, process, Z, y);
+        else
+                return ANT_RETURN_DOMAIN_ERROR;
 
         return ANT_RETURN_SUCCESS;
 }

@@ -53,30 +53,36 @@ enum ant_return {
  *  Projectiles, i.e. neutrinos flavours.
  */
 enum ant_projectile {
-        /** The electron neutrino. */
-        ANT_PROJECTILE_NU_E = 0,
-        /** The muon neutrino. */
-        ANT_PROJECTILE_NU_MU,
-        /** The tau neutrino. */
-        ANT_PROJECTILE_NU_TAU,
-        /** The electron anti-neutrino. */
-        ANT_PROJECTILE_NU_E_BAR,
-        /** The muon anti-neutrino. */
-        ANT_PROJECTILE_NU_MU_BAR,
         /** The tau anti-neutrino. */
-        ANT_PROJECTILE_NU_TAU_BAR,
+        ANT_PROJECTILE_NU_TAU_BAR = -3,
+        /** The muon anti-neutrino. */
+        ANT_PROJECTILE_NU_MU_BAR = -2,
+        /** The electron anti-neutrino. */
+        ANT_PROJECTILE_NU_E_BAR = -1,
+        /** The electron neutrino. */
+        ANT_PROJECTILE_NU_E = 1,
+        /** The muon neutrino. */
+        ANT_PROJECTILE_NU_MU = 2,
+        /** The tau neutrino. */
+        ANT_PROJECTILE_NU_TAU = 3,
         /* The number of projectiles. */
-        ANT_N_PROJECTILES
+        ANT_N_PROJECTILES = 6
 };
 
 /**
  *  Neutrino interaction processes.
  */
 enum ant_process {
-        /** The charged current DIS process. */
-        ANT_PROCESS_CC = 0,
+        /** The elastic scattering on electrons, e.g. nu+e->nu+e. */
+        ANT_PROCESS_ELASTIC = 0,
         /** The neutral current DIS process. */
-        ANT_PROCESS_NC,
+        ANT_PROCESS_DIS_NC,
+        /** The charged current DIS process. */
+        ANT_PROCESS_DIS_CC,
+        /** The inverse muon decay : nu_mu+e->nu_e+mu. */
+        ANT_PROCESS_INVERSE_MUON,
+        /** The inverse tau decay : nu_tau+e->nu_tau+mu. */
+        ANT_PROCESS_INVERSE_TAU,
         /* The number of processes. */
         ANT_N_PROCESSES
 };
