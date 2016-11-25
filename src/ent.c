@@ -1,5 +1,5 @@
 /*
- *  An engine for Neutrinos Transport (ENT)
+ *  an Engine for Neutrinos Transport (ENT)
  *  Copyright (C) 2016  Valentin Niess
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -77,6 +77,83 @@ static int memory_padded_size(int size, int pad_size)
 static void * physics_create(int extra_size)
 {
         return malloc(sizeof(struct ent_physics) + extra_size);
+}
+
+/* Get a return code as a string. */
+const char * ent_error_string(enum ent_return code)
+{
+        static const char * msg[ENT_N_RETURNS] = { "Operation succeeded",
+                "Bad address", "Value is out of validity range",
+                "Invalid file format", "Couldn't read file",
+                "Not enough memory", "No such file or directory" };
+
+        if ((code < 0) || (code >= ENT_N_RETURNS))
+                return NULL;
+        else
+                return msg[code];
+}
+
+/* Get a library function name as a string. */
+const char * ent_error_function(ent_function_t * caller)
+{
+#define REGISTER_FUNCTION(function)                                            \
+        if (caller == (ent_function_t *)function) return #function
+
+        /* API functions with error codes. */
+        REGISTER_FUNCTION(ent_physics_create);
+        REGISTER_FUNCTION(ent_physics_dcs);
+        REGISTER_FUNCTION(ent_physics_pdf);
+
+        /* Other API functions. */
+        REGISTER_FUNCTION(ent_physics_destroy);
+        REGISTER_FUNCTION(ent_error_string);
+        REGISTER_FUNCTION(ent_error_function);
+        REGISTER_FUNCTION(ent_error_handler_get);
+        REGISTER_FUNCTION(ent_error_handler_set);
+
+        return NULL;
+#undef REGISTER_FUNCTION
+}
+
+/* The user supplied error handler, if any. */
+static ent_handler_cb * _handler = NULL;
+
+/* Getter for the error handler. */
+ent_handler_cb * ent_error_handler_get(void) { return _handler; }
+
+/* Setter for the error handler. */
+void ent_error_handler_set(ent_handler_cb * handler) { _handler = handler; }
+
+/* Encapsulation of `return` with an error handler. */
+static enum ent_return error_handle(
+    enum ent_return code, ent_function_t * caller)
+{
+        if (code == ENT_RETURN_SUCCESS)
+                return code;
+        else if (_handler != NULL)
+                _handler(code, caller);
+        return code;
+}
+
+/* Helper macros for returning an encapsulated error code. */
+#define ENT_ACKNOWLEDGE(caller)                                                \
+        ent_function_t * _caller = (ent_function_t *)caller
+
+#define ENT_RETURN(code) return error_handle(code, _caller)
+
+/* Format an error message in JSON. */
+void ent_error_print(FILE * stream, enum ent_return code,
+    ent_function_t * function, const char * tabulation, const char * newline)
+{
+        const char * tab = (tabulation == NULL) ? "" : tabulation;
+        const char * cr = (newline == NULL) ? "" : newline;
+
+        fprintf(stream, "{%s%s\"code\" : %d,%s%s\"message\" : \"%s\"", cr, tab,
+            code, cr, tab, ent_error_string(code));
+        if (function != NULL)
+                fprintf(stream, ",%s%s\"function\" : \"%s\"", cr, tab,
+                    ent_error_function(function));
+        fprintf(stream, "%s}", cr);
 }
 
 /* Buffer for reading data from a text file. */
@@ -616,6 +693,8 @@ static double cteq_pdf_compute(
 enum ent_return ent_physics_create(
     struct ent_physics ** physics, const char * pdf_file)
 {
+        ENT_ACKNOWLEDGE(ent_physics_create);
+
         enum ent_return rc;
         *physics = NULL;
 
@@ -628,7 +707,7 @@ enum ent_return ent_physics_create(
 
 exit:
         if (stream != NULL) fclose(stream);
-        return rc;
+        ENT_RETURN(rc);
 }
 
 void ent_physics_destroy(struct ent_physics ** physics)
@@ -787,26 +866,45 @@ static double dcs_inverse(enum ent_projectile projectile, double energy,
 /* Generic API function for computing DCSs. */
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_projectile projectile, double energy, double Z, double A,
-    enum ent_process process, double x, double y, double * value)
+    enum ent_process process, double x, double y, double * dcs)
 {
+        ENT_ACKNOWLEDGE(ent_physics_dcs);
+
         /* Check the inputs. */
-        *value = 0.;
+        *dcs = 0.;
         if ((x > 1.) || (x < 0.) || (y > 1.) || (y < 0.))
-                return ENT_RETURN_DOMAIN_ERROR;
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
 
         /* Compute the corresponding DCS. */
         if (process == ENT_PROCESS_ELASTIC)
-                *value = dcs_elastic(projectile, energy, Z, y);
+                *dcs = dcs_elastic(projectile, energy, Z, y);
         else if ((process == ENT_PROCESS_DIS_CC) ||
             (process == ENT_PROCESS_DIS_NC))
-                *value =
+                *dcs =
                     dcs_dis(physics, projectile, energy, Z, A, process, x, y);
         else if ((process == ENT_PROCESS_INVERSE_MUON) ||
             (process == ENT_PROCESS_INVERSE_TAU))
-                *value = dcs_inverse(projectile, energy, process, Z, y);
+                *dcs = dcs_inverse(projectile, energy, process, Z, y);
         else
-                return ENT_RETURN_DOMAIN_ERROR;
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
 
+        return ENT_RETURN_SUCCESS;
+}
+
+/* API interface to PDFs. */
+enum ent_return ent_physics_pdf(struct ent_physics * physics,
+    enum ent_parton parton, double x, double q2, double * value)
+{
+        ENT_ACKNOWLEDGE(ent_physics_pdf);
+
+        /* Check the inputs. */
+        *value = 0.;
+        const struct cteq_pdf * const pdf = physics->pdf;
+        if ((x > 1.) || (x < 0.) || (q2 < 0.) || (abs(parton) > pdf->nfmx))
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+
+        /* Compute the PDF and return. */
+        *value = cteq_pdf_compute(pdf, parton, x, sqrt(q2));
         return ENT_RETURN_SUCCESS;
 }
 

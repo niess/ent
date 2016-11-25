@@ -88,6 +88,40 @@ enum ent_process {
 };
 
 /**
+ *  Parton codes.
+ */
+enum ent_parton {
+        /** The top anti-quark. */
+        ENT_PARTON_T_BAR = -6,
+        /** The beauty anti-quark. */
+        ENT_PARTON_B_BAR = -5,
+        /** The charm anti-quark. */
+        ENT_PARTON_C_BAR = -4,
+        /** The strange anti-quark. */
+        ENT_PARTON_S_BAR = -6,
+        /** The up anti-quark. */
+        ENT_PARTON_U_BAR = -5,
+        /** The down anti-quark */
+        ENT_PARTON_D_BAR = -4,
+        /** The gluon. */
+        ENT_PARTON_GLUON = 0,
+        /** The down quark. */
+        ENT_PARTON_D = 1,
+        /** The up quark */
+        ENT_PARTON_U = 2,
+        /** The strange quark. */
+        ENT_PARTON_S = 3,
+        /** The charm quark. */
+        ENT_PARTON_C = 4,
+        /** The beauty quark. */
+        ENT_PARTON_B = 5,
+        /** The top quark. */
+        ENT_PARTON_T = 6,
+        /* The number of partons. */
+        ENT_N_PARTONS = 13
+};
+
+/**
 * Generic function pointer.
 *
 * This is a generic function pointer used to identify the library functions,
@@ -116,11 +150,20 @@ struct ent_physics;
  *
  * @param physics    A handle for the Physics environment.
  * @param pdf        The PDF file(s) to create the set from.
+ * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+ * code is returned as detailed below.
  *
  * Create a new Physics environment conforming to the Standard Model of
  * Particle Physics and according to the given tabulations of Parton
  * Distribution Functions (PDF).
  *
+ * __Error codes__
+ *
+ *     ENT_RETURN_FORMAT_ERROR    The pdf file format is not valid / supported.
+ *
+ *     ENT_RETURN_MEMORY_ERROR    Couldn't allocate memory.
+ *
+ *     ENT_RETURN_PATH_ERROR      The pdf file couldn't be found/opened.
  */
 enum ent_return ent_physics_create(
     struct ent_physics ** physics, const char * pdf);
@@ -137,7 +180,7 @@ void ent_physics_destroy(struct ent_physics ** physics);
 /**
  * Compute a DCS.
  *
- * @param dcs           A handle for the DCS set.
+ * @param physics       A handle for the Physics.
  * @param projectile    The incoming projectile.
  * @param energy        The projectile total energy.
  * @param Z             The target charge number.
@@ -145,15 +188,42 @@ void ent_physics_destroy(struct ent_physics ** physics);
  * @param process       The interaction process.
  * @param x             The Bjorken _x_ fraction.
  * @param y             The energy loss fraction.
- * @param value         The coresponding DCS.
+ * @param dcs           The coresponding DCS value.
+ * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+ * code is returned as detailed below.
  *
  * Compute the Differential Cross-Section (DCS) in the Laboratory frame for
  * the given projectile incoming on a target (Z, A) at rest. For an isoscalar
  * nucleon set `Z = 0.5` and `A = 1`.
+ *
+ * __Error codes__
+ *
+ *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is invalid.
  */
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_projectile projectile, double energy, double Z, double A,
-    enum ent_process process, double x, double y, double * value);
+    enum ent_process process, double x, double y, double * dcs);
+
+/**
+* Compute a PDF.
+*
+* @param physics    A handle for the Physics.
+* @param parton     The parton of interest.
+* @param x          The Bjorken _x_ fraction.
+* @param q2         The squared momentum transfer.
+* @param pdf        The coresponding PDF value.
+* @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+* code is returned as detailed below.
+*
+* Compute the Parton Distribution Function (PDF) for the given _parton_ and
+* kinematic parameters.
+*
+* __Error codes__
+*
+*     ENT_RETURN_DOMAIN_ERROR     Some input parameter is invalid.
+*/
+enum ent_return ent_physics_pdf(struct ent_physics * physics,
+    enum ent_parton parton, double x, double q2, double * value);
 
 /**
  * Return a string describing a `ent_return` code.
@@ -182,15 +252,15 @@ const char * ent_error_function(ent_function_t * function);
  *
  * @param stream        The output stream where to print.
  * @param code          The `ent_return` error code.
- * @param caller        The library calling function.
+ * @param function      The library calling function.
  * @param tabulation    The tabulation separator or `NULL`.
  * @param newline       The newline separator or `NULL`.
  *
  * The output summary is formated in JSON. The *tabulation* and *newline*
  * parameters allow to control the output's rendering.
  */
-void ent_error_print(FILE * stream, enum ent_return code, ent_function_t caller,
-    const char * tabulation, const char * newline);
+void ent_error_print(FILE * stream, enum ent_return code,
+    ent_function_t function, const char * tabulation, const char * newline);
 
 /**
  * Set or clear the error handler.
