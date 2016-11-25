@@ -73,16 +73,18 @@ enum ent_projectile {
  *  Neutrino interaction processes.
  */
 enum ent_process {
-        /** The elastic scattering on electrons, e.g. nu+e->nu+e. */
+        /** The elastic scattering on electrons, e.g. nu + e -> nu + e. */
         ENT_PROCESS_ELASTIC = 0,
         /** The neutral current DIS process. */
         ENT_PROCESS_DIS_NC,
         /** The charged current DIS process. */
         ENT_PROCESS_DIS_CC,
-        /** The inverse muon decay : nu_mu+e->nu_e+mu. */
+        /** The inverse muon decay, e.g. nu_mu + e- -> nu_e + mu-. */
         ENT_PROCESS_INVERSE_MUON,
-        /** The inverse tau decay : nu_tau+e->nu_tau+mu. */
+        /** The inverse tau decay, e.g. nu_tau + e- -> nu_e + tau-. */
         ENT_PROCESS_INVERSE_TAU,
+        /** The resonant hadron(s) production in nu_e~ + e- -> W -> h. */
+        ENT_PROCESS_GLASHOW_HADRON,
         /* The number of processes. */
         ENT_N_PROCESSES
 };

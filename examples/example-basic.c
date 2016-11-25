@@ -29,12 +29,12 @@ int main()
         ent_physics_create(&physics, "data/pdf/cteq6d.tbl");
 
         /* Test some DCS. */
-        const double energy = 1E+06;
+        const double energy = 6.3E+06;
         const double x = 1E-05;
         const double y = 1E-02;
         double dcs;
-        ent_physics_dcs(physics, ENT_PROJECTILE_NU_TAU, energy, 0.5, 1.,
-            ENT_PROCESS_DIS_CC, x, y, &dcs);
+        ent_physics_dcs(physics, ENT_PROJECTILE_NU_E_BAR, energy, 0.5, 1.,
+            ENT_PROCESS_GLASHOW_HADRON, x, y, &dcs);
         printf("DCS(%.5lE, %.5lE, %.5lE) = %.5lE\n", energy, x, y, dcs);
 
         const double q2 = energy * x * y * 0.931;

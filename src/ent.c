@@ -40,6 +40,8 @@
 #define ENT_MASS_Z 91.1876
 /* The W boson width, in GeV/c^2. */
 #define ENT_WIDTH_W 2.085
+/* The W boson partial width to muon + nu_mu, in GeV/c^2. */
+#define ENT_WIDTH_W_TO_MUON 0.22164
 /* The Fermi coupling constant GF/(hbar*c)^3, in GeV^-2. */
 #define ENT_PHYS_GF 1.1663787E-05
 /* The Planck constant as hbar*c, in GeV * m. */
@@ -863,6 +865,16 @@ static double dcs_inverse(enum ent_projectile projectile, double energy,
             (ENT_PHYS_GF * ENT_PHYS_HBC) * 2. * r * r * factor / M_PI;
 }
 
+/* DCS for hadron(s) production by Glashow's resonance. */
+static double dcs_glashow(enum ent_projectile projectile, double energy,
+    enum ent_process process, double Z, double y)
+{
+        if (projectile != ENT_PROJECTILE_NU_E_BAR) return 0.;
+
+        return (ENT_WIDTH_W / ENT_WIDTH_W_TO_MUON - 2.) *
+            dcs_inverse(projectile, energy, ENT_PROCESS_INVERSE_MUON, Z, y);
+}
+
 /* Generic API function for computing DCSs. */
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_projectile projectile, double energy, double Z, double A,
@@ -885,6 +897,8 @@ enum ent_return ent_physics_dcs(struct ent_physics * physics,
         else if ((process == ENT_PROCESS_INVERSE_MUON) ||
             (process == ENT_PROCESS_INVERSE_TAU))
                 *dcs = dcs_inverse(projectile, energy, process, Z, y);
+        else if (process == ENT_PROCESS_GLASHOW_HADRON)
+                *dcs = dcs_glashow(projectile, energy, process, Z, y);
         else
                 ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
 
