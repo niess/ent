@@ -1,5 +1,5 @@
 /*
- *  An engine for Neutrinos Transport (ANT)
+ *  An engine for Neutrinos Transport (ENT)
  *  Copyright (C) 2016  Valentin Niess
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -8,8 +8,8 @@
  *  (at your option) any later version.
  *
  *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  but WITHOUT ANY WARRENTY; without even the implied warranty of
+ *  MERCHENTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  *
  *  You should have received a copy of the GNU General Public License
@@ -23,29 +23,29 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The ANT API. */
-#include "ant.h"
+/* The ENT API. */
+#include "ent.h"
 
 /* The electron mass, in GeV/c^2. */
-#define ANT_MASS_ELECTRON 0.511E-03
+#define ENT_MASS_ELECTRON 0.511E-03
 /* The muon mass, in GeV/c^2. */
-#define ANT_MASS_MUON 0.10566
+#define ENT_MASS_MUON 0.10566
 /* The tau mass, in GeV/c^2. */
-#define ANT_MASS_TAU 1.77682
+#define ENT_MASS_TAU 1.77682
 /* The nucleon mass, in GeV/c^2. */
-#define ANT_MASS_NUCLEON 0.931494
+#define ENT_MASS_NUCLEON 0.931494
 /* The W boson mass, in GeV/c^2. */
-#define ANT_MASS_W 80.385
+#define ENT_MASS_W 80.385
 /* The Z boson mass, in GeV/c^2. */
-#define ANT_MASS_Z 91.1876
+#define ENT_MASS_Z 91.1876
 /* The W boson width, in GeV/c^2. */
-#define ANT_WIDTH_W 2.085
+#define ENT_WIDTH_W 2.085
 /* The Fermi coupling constant GF/(hbar*c)^3, in GeV^-2. */
-#define ANT_PHYS_GF 1.1663787E-05
+#define ENT_PHYS_GF 1.1663787E-05
 /* The Planck constant as hbar*c, in GeV * m. */
-#define ANT_PHYS_HBC 1.97326978E-16
+#define ENT_PHYS_HBC 1.97326978E-16
 /* The Weinberg angle at MZ, as sin(theta_W)^2. */
-#define ANT_PHYS_SIN_THETA_W_2 0.231295
+#define ENT_PHYS_SIN_THETA_W_2 0.231295
 
 #ifndef M_PI
 /* Define pi, if unknown. */
@@ -56,7 +56,7 @@
 struct file_buffer {
         jmp_buf env;
         FILE * stream;
-        enum ant_return code;
+        enum ent_return code;
         unsigned int size;
         char * cursor;
         char line[];
@@ -66,29 +66,29 @@ struct file_buffer {
 #define FILE_BLOCK_SIZE 2048
 
 /* Create a new file buffer */
-static enum ant_return file_buffer_create(
+static enum ent_return file_buffer_create(
     struct file_buffer ** buffer, FILE * stream, jmp_buf env)
 {
         if ((*buffer = malloc(FILE_BLOCK_SIZE)) == NULL)
-                return ANT_RETURN_MEMORY_ERROR;
+                return ENT_RETURN_MEMORY_ERROR;
         memcpy((*buffer)->env, env, sizeof(jmp_buf));
         (*buffer)->stream = stream;
-        (*buffer)->code = ANT_RETURN_SUCCESS;
+        (*buffer)->code = ENT_RETURN_SUCCESS;
         (*buffer)->size = FILE_BLOCK_SIZE - sizeof(**buffer);
         (*buffer)->cursor = NULL;
 
-        return ANT_RETURN_SUCCESS;
+        return ENT_RETURN_SUCCESS;
 }
 
 /* Raise a file parsing error. */
-static void file_raise_error(struct file_buffer * buffer, enum ant_return code)
+static void file_raise_error(struct file_buffer * buffer, enum ent_return code)
 {
         buffer->code = code;
         longjmp(buffer->env, 1);
 }
 
 /* Load next line from file to buffer. */
-static enum ant_return file_get_line_(struct file_buffer ** buffer, int skip)
+static enum ent_return file_get_line_(struct file_buffer ** buffer, int skip)
 {
         /* Get a new line. */
         char * ptr = (*buffer)->line;
@@ -98,7 +98,7 @@ static enum ant_return file_get_line_(struct file_buffer ** buffer, int skip)
                         const char check = 0x1;
                         ptr[size - 1] = check;
                         if (fgets(ptr, size, (*buffer)->stream) == NULL)
-                                return ANT_RETURN_IO_ERROR;
+                                return ENT_RETURN_IO_ERROR;
 
                         /* Check that no overflow occured. */
                         if (ptr[size - 1] == check) break;
@@ -106,7 +106,7 @@ static enum ant_return file_get_line_(struct file_buffer ** buffer, int skip)
                         /* Get more memory then ... */
                         void * tmp =
                             realloc(*buffer, (*buffer)->size + FILE_BLOCK_SIZE);
-                        if (tmp == NULL) return ANT_RETURN_MEMORY_ERROR;
+                        if (tmp == NULL) return ENT_RETURN_MEMORY_ERROR;
                         *buffer = tmp;
                         (*buffer)->size += FILE_BLOCK_SIZE;
                         size = FILE_BLOCK_SIZE + 1;
@@ -116,15 +116,15 @@ static enum ant_return file_get_line_(struct file_buffer ** buffer, int skip)
 
         /* Reset the line cursor and return. */
         (*buffer)->cursor = (*buffer)->line;
-        return ANT_RETURN_SUCCESS;
+        return ENT_RETURN_SUCCESS;
 }
 
 #undef FILE_BLOCK_SIZE /* No more needed. */
 
 static void file_get_line(struct file_buffer ** buffer, int skip)
 {
-        enum ant_return rc;
-        if ((rc = file_get_line_(buffer, skip)) != ANT_RETURN_SUCCESS)
+        enum ent_return rc;
+        if ((rc = file_get_line_(buffer, skip)) != ENT_RETURN_SUCCESS)
                 file_raise_error(*buffer, rc);
 }
 
@@ -144,7 +144,7 @@ static void file_get_word(struct file_buffer * buffer, int skip)
                                 ;
                         if (*p == 0x0)
                                 file_raise_error(
-                                    buffer, ANT_RETURN_FORMAT_ERROR);
+                                    buffer, ENT_RETURN_FORMAT_ERROR);
                         if (skip-- <= 0) {
                                 char * q;
                                 for (q = p; (*q != ' ') && (*q != 0x0); q++)
@@ -157,24 +157,24 @@ static void file_get_word(struct file_buffer * buffer, int skip)
         }
 
         /* No word found. Raise an error. */
-        file_raise_error(buffer, ANT_RETURN_FORMAT_ERROR);
+        file_raise_error(buffer, ENT_RETURN_FORMAT_ERROR);
 }
 
 /* Parse the next float in the buffer. */
-static enum ant_return file_get_float_(struct file_buffer * buffer, float * f)
+static enum ent_return file_get_float_(struct file_buffer * buffer, float * f)
 {
         char * endptr;
         *f = strtof(buffer->cursor, &endptr);
-        if (buffer->cursor == endptr) return ANT_RETURN_FORMAT_ERROR;
+        if (buffer->cursor == endptr) return ENT_RETURN_FORMAT_ERROR;
         buffer->cursor = endptr;
-        return ANT_RETURN_SUCCESS;
+        return ENT_RETURN_SUCCESS;
 }
 
 static float file_get_float(struct file_buffer * buffer)
 {
-        enum ant_return rc;
+        enum ent_return rc;
         float f;
-        if ((rc = file_get_float_(buffer, &f)) != ANT_RETURN_SUCCESS)
+        if ((rc = file_get_float_(buffer, &f)) != ENT_RETURN_SUCCESS)
                 file_raise_error(buffer, rc);
         return f;
 }
@@ -183,14 +183,14 @@ static float file_get_float(struct file_buffer * buffer)
 static void file_get_table(
     struct file_buffer ** buffer, int size, float * table)
 {
-        enum ant_return rc;
+        enum ent_return rc;
         int failed = 0, n = 0;
         while (n < size) {
                 if ((rc = file_get_float_(*buffer, table)) !=
-                    ANT_RETURN_SUCCESS) {
+                    ENT_RETURN_SUCCESS) {
                         if (failed) file_raise_error(*buffer, rc);
                         if ((rc = file_get_line_(buffer, 0)) !=
-                            ANT_RETURN_SUCCESS)
+                            ENT_RETURN_SUCCESS)
                                 file_raise_error(*buffer, rc);
                         failed = 1;
                 } else {
@@ -288,10 +288,10 @@ struct cteq_pdf {
 #define CTEQ_XPOW 0.3
 
 /* Load PDFs from a .tbl file. */
-static enum ant_return tbl_load(FILE * stream, struct cteq_pdf ** pdf)
+static enum ent_return tbl_load(FILE * stream, struct cteq_pdf ** pdf)
 {
         *pdf = NULL;
-        enum ant_return rc;
+        enum ent_return rc;
         struct cteq_pdf header;
         struct file_buffer * buffer = NULL;
         memset(&header, 0x0, sizeof(header));
@@ -305,7 +305,7 @@ static enum ant_return tbl_load(FILE * stream, struct cteq_pdf ** pdf)
 
         /* Create the temporary file buffer. */
         if ((rc = file_buffer_create(&buffer, stream, env)) !=
-            ANT_RETURN_SUCCESS)
+            ENT_RETURN_SUCCESS)
                 goto exit;
 
         /* Parse the table name length. */
@@ -343,7 +343,7 @@ static enum ant_return tbl_load(FILE * stream, struct cteq_pdf ** pdf)
         const unsigned int size =
             sizeof(header) + size_name + 2 * size_x + size_t + size_upd;
         if ((*pdf = malloc(size)) == NULL) {
-                rc = ANT_RETURN_MEMORY_ERROR;
+                rc = ENT_RETURN_MEMORY_ERROR;
                 goto exit;
         }
         memcpy(*pdf, &header, sizeof(header));
@@ -411,7 +411,7 @@ static enum ant_return tbl_load(FILE * stream, struct cteq_pdf ** pdf)
 
 exit:
         free(buffer);
-        if (rc != ANT_RETURN_SUCCESS) {
+        if (rc != ENT_RETURN_SUCCESS) {
                 free(*pdf);
                 *pdf = NULL;
         }
@@ -598,26 +598,26 @@ static double cteq_pdf_compute(
 
 #undef CTEQ_XPOW /* No more needed. */
 
-enum ant_return ant_dcs_create(const char * data, struct ant_dcs ** dcs)
+enum ent_return ent_dcs_create(const char * data, struct ent_dcs ** dcs)
 {
-        enum ant_return rc;
+        enum ent_return rc;
         *dcs = NULL;
 
         FILE * stream;
-        rc = ANT_RETURN_PATH_ERROR;
+        rc = ENT_RETURN_PATH_ERROR;
         if ((stream = fopen(data, "r")) == NULL) goto exit;
 
         struct cteq_pdf * pdf;
-        if ((rc = tbl_load(stream, &pdf)) != ANT_RETURN_SUCCESS) goto exit;
-        *dcs = (struct ant_dcs *)pdf;
-        rc = ANT_RETURN_SUCCESS;
+        if ((rc = tbl_load(stream, &pdf)) != ENT_RETURN_SUCCESS) goto exit;
+        *dcs = (struct ent_dcs *)pdf;
+        rc = ENT_RETURN_SUCCESS;
 
 exit:
         if (stream != NULL) fclose(stream);
         return rc;
 }
 
-void ant_dcs_destroy(struct ant_dcs ** dcs)
+void ent_dcs_destroy(struct ent_dcs ** dcs)
 {
         if ((dcs == NULL) || (*dcs == NULL)) return;
 
@@ -626,18 +626,18 @@ void ant_dcs_destroy(struct ant_dcs ** dcs)
 }
 
 /* DCS for Deep Inelastic Scattering (DIS). */
-static double dcs_dis(struct ant_dcs * dcs, enum ant_projectile projectile,
-    double energy, double Z, double A, enum ant_process process, double x,
+static double dcs_dis(struct ent_dcs * dcs, enum ent_projectile projectile,
+    double energy, double Z, double A, enum ent_process process, double x,
     double y)
 {
         /* Compute the PDF. */
-        const double Q2 = 2. * x * y * ANT_MASS_NUCLEON * energy;
+        const double Q2 = 2. * x * y * ENT_MASS_NUCLEON * energy;
         const double q = sqrt(Q2);
         struct cteq_pdf * pdf = (struct cteq_pdf *)dcs;
         int eps = (projectile > 0) ? 1 : -1; /* CP? */
         const double N = A - Z;              /* Number of neutrons. */
         double factor;
-        if (process == ANT_PROCESS_DIS_CC) {
+        if (process == ENT_PROCESS_DIS_CC) {
                 /* Charged current DIS process. */
                 const double d =
                     (Z <= 0.) ? 0. : cteq_pdf_compute(pdf, 1 * eps, x, q);
@@ -656,7 +656,7 @@ static double dcs_dis(struct ant_dcs * dcs, enum ant_projectile projectile,
 
                 const double y1 = 1. - y;
                 const double F = F1 + F2 * y1 * y1;
-                const double MW2 = ANT_MASS_W * ANT_MASS_W;
+                const double MW2 = ENT_MASS_W * ENT_MASS_W;
                 const double r = MW2 / (MW2 + Q2);
                 factor = 2 * F * r * r;
         } else {
@@ -667,7 +667,7 @@ static double dcs_dis(struct ant_dcs * dcs, enum ant_projectile projectile,
                 const double c = cteq_pdf_compute(pdf, 4 * eps, x, q);
                 const double b = cteq_pdf_compute(pdf, 5 * eps, x, q);
 
-                const double s23 = 2. * ANT_PHYS_SIN_THETA_W_2 / 3.;
+                const double s23 = 2. * ENT_PHYS_SIN_THETA_W_2 / 3.;
                 const double gp2 = 1. + 4. * s23 * (s23 - 1.);
                 const double gm2 = 4. * s23 * s23;
                 const double gpp2 = 1. + s23 * (s23 - 2.);
@@ -689,40 +689,40 @@ static double dcs_dis(struct ant_dcs * dcs, enum ant_projectile projectile,
                     (Z * dbar + N * ubar + A * (sbar + bbar));
 
                 const double F = F1 + F2 + F3 + F4;
-                const double MZ2 = ANT_MASS_Z * ANT_MASS_Z;
+                const double MZ2 = ENT_MASS_Z * ENT_MASS_Z;
                 const double r = MZ2 / (MZ2 + Q2);
                 factor = 0.5 * F * r * r;
         }
 
         /* Return the DCS. */
-        return energy * x * factor * (ANT_PHYS_GF * ANT_PHYS_HBC) *
-            (ANT_PHYS_GF * ANT_PHYS_HBC) * ANT_MASS_NUCLEON / M_PI;
+        return energy * x * factor * (ENT_PHYS_GF * ENT_PHYS_HBC) *
+            (ENT_PHYS_GF * ENT_PHYS_HBC) * ENT_MASS_NUCLEON / M_PI;
 }
 
 /* DCS for elastic scattering on electrons. */
 static double dcs_elastic(
-    enum ant_projectile projectile, double energy, double Z, double y)
+    enum ent_projectile projectile, double energy, double Z, double y)
 {
-        const double R = 2. * ANT_PHYS_SIN_THETA_W_2;
-        const double L = 2. * ANT_PHYS_SIN_THETA_W_2 - 1.;
-        const double MZ2 = ANT_MASS_Z * ANT_MASS_Z;
-        const double rZ = MZ2 / (MZ2 + 2. * ANT_MASS_ELECTRON * energy * y);
+        const double R = 2. * ENT_PHYS_SIN_THETA_W_2;
+        const double L = 2. * ENT_PHYS_SIN_THETA_W_2 - 1.;
+        const double MZ2 = ENT_MASS_Z * ENT_MASS_Z;
+        const double rZ = MZ2 / (MZ2 + 2. * ENT_MASS_ELECTRON * energy * y);
 
         double factor;
-        if (projectile == ANT_PROJECTILE_NU_E_BAR) {
+        if (projectile == ENT_PROJECTILE_NU_E_BAR) {
                 const double tmp1 = R * rZ;
                 const double a =
-                    ANT_MASS_W * ANT_MASS_W - 2. * ANT_MASS_ELECTRON * energy;
-                const double b = ANT_WIDTH_W * ANT_MASS_W;
-                const double c = 2. * ANT_MASS_W * ANT_MASS_W / (a * a + b * b);
+                    ENT_MASS_W * ENT_MASS_W - 2. * ENT_MASS_ELECTRON * energy;
+                const double b = ENT_WIDTH_W * ENT_MASS_W;
+                const double c = 2. * ENT_MASS_W * ENT_MASS_W / (a * a + b * b);
                 const double d = rZ + c * a;
                 const double e = -c * b;
                 factor = tmp1 * tmp1 + (d * d + e * e) * (1. - y) * (1. - y);
-        } else if (projectile == ANT_PROJECTILE_NU_E) {
+        } else if (projectile == ENT_PROJECTILE_NU_E) {
                 const double tmp1 = R * (1. - y) * rZ;
-                const double MW2 = ANT_MASS_W * ANT_MASS_W;
+                const double MW2 = ENT_MASS_W * ENT_MASS_W;
                 const double rW =
-                    MW2 / (MW2 + 2. * ANT_MASS_ELECTRON * energy * (1. - y));
+                    MW2 / (MW2 + 2. * ENT_MASS_ELECTRON * energy * (1. - y));
                 const double tmp2 = L * rZ + 2. * rW;
                 factor = tmp1 * tmp1 + tmp2 * tmp2;
         } else {
@@ -732,67 +732,67 @@ static double dcs_elastic(
                 factor = tmp * rZ * rZ;
         }
 
-        return Z * energy * ANT_MASS_ELECTRON * (ANT_PHYS_GF * ANT_PHYS_HBC) *
-            (ANT_PHYS_GF * ANT_PHYS_HBC) * factor / (2 * M_PI);
+        return Z * energy * ENT_MASS_ELECTRON * (ENT_PHYS_GF * ENT_PHYS_HBC) *
+            (ENT_PHYS_GF * ENT_PHYS_HBC) * factor / (2 * M_PI);
 }
 
 /* DCS for inelastic scattering on electrons. */
-static double dcs_inverse(enum ant_projectile projectile, double energy,
-    enum ant_process process, double Z, double y)
+static double dcs_inverse(enum ent_projectile projectile, double energy,
+    enum ent_process process, double Z, double y)
 {
-        if ((projectile != ANT_PROJECTILE_NU_E_BAR) &&
-            ((projectile != ANT_PROJECTILE_NU_MU) ||
-                (process != ANT_PROCESS_INVERSE_MUON)) &&
-            ((projectile != ANT_PROJECTILE_NU_TAU) ||
-                (process != ANT_PROCESS_INVERSE_TAU)))
+        if ((projectile != ENT_PROJECTILE_NU_E_BAR) &&
+            ((projectile != ENT_PROJECTILE_NU_MU) ||
+                (process != ENT_PROCESS_INVERSE_MUON)) &&
+            ((projectile != ENT_PROJECTILE_NU_TAU) ||
+                (process != ENT_PROCESS_INVERSE_TAU)))
                 return 0.;
 
-        const double ml = (process == ANT_PROCESS_INVERSE_MUON) ?
-            ANT_MASS_MUON :
-            ANT_MASS_TAU;
-        const double MW2 = ANT_MASS_W * ANT_MASS_W;
+        const double ml = (process == ENT_PROCESS_INVERSE_MUON) ?
+            ENT_MASS_MUON :
+            ENT_MASS_TAU;
+        const double MW2 = ENT_MASS_W * ENT_MASS_W;
 
         double factor;
-        if (projectile == ANT_PROJECTILE_NU_E_BAR) {
-                const double a = 1. - 2. * ANT_MASS_ELECTRON * energy / MW2;
-                const double b2 = ANT_WIDTH_W * ANT_WIDTH_W / MW2;
+        if (projectile == ENT_PROJECTILE_NU_E_BAR) {
+                const double a = 1. - 2. * ENT_MASS_ELECTRON * energy / MW2;
+                const double b2 = ENT_WIDTH_W * ENT_WIDTH_W / MW2;
                 factor = (1. - y) * (1. - y) / (a * a + b2);
         } else {
                 const double tmp =
-                    MW2 / (MW2 + 2. * ANT_MASS_ELECTRON * energy * (1. - y));
+                    MW2 / (MW2 + 2. * ENT_MASS_ELECTRON * energy * (1. - y));
                 factor = tmp * tmp;
         }
 
         const double r = 1. -
-            (ml * ml - ANT_MASS_ELECTRON * ANT_MASS_ELECTRON) /
-                (2. * ANT_MASS_ELECTRON * energy);
-        return Z * energy * ANT_MASS_ELECTRON * (ANT_PHYS_GF * ANT_PHYS_HBC) *
-            (ANT_PHYS_GF * ANT_PHYS_HBC) * 2. * r * r * factor / M_PI;
+            (ml * ml - ENT_MASS_ELECTRON * ENT_MASS_ELECTRON) /
+                (2. * ENT_MASS_ELECTRON * energy);
+        return Z * energy * ENT_MASS_ELECTRON * (ENT_PHYS_GF * ENT_PHYS_HBC) *
+            (ENT_PHYS_GF * ENT_PHYS_HBC) * 2. * r * r * factor / M_PI;
 }
 
 /* Generic API function for computing the DCS. */
-enum ant_return ant_dcs_compute(struct ant_dcs * dcs,
-    enum ant_projectile projectile, double energy, double Z, double A,
-    enum ant_process process, double x, double y, double * value)
+enum ent_return ent_dcs_compute(struct ent_dcs * dcs,
+    enum ent_projectile projectile, double energy, double Z, double A,
+    enum ent_process process, double x, double y, double * value)
 {
         /* Check the inputs. */
         *value = 0.;
         if ((x > 1.) || (x < 0.) || (y > 1.) || (y < 0.))
-                return ANT_RETURN_DOMAIN_ERROR;
+                return ENT_RETURN_DOMAIN_ERROR;
 
         /* Compute the corresponding DCS. */
-        if (process == ANT_PROCESS_ELASTIC)
+        if (process == ENT_PROCESS_ELASTIC)
                 *value = dcs_elastic(projectile, energy, Z, y);
-        else if ((process == ANT_PROCESS_DIS_CC) ||
-            (process == ANT_PROCESS_DIS_NC))
+        else if ((process == ENT_PROCESS_DIS_CC) ||
+            (process == ENT_PROCESS_DIS_NC))
                 *value = dcs_dis(dcs, projectile, energy, Z, A, process, x, y);
-        else if ((process == ANT_PROCESS_INVERSE_MUON) ||
-            (process == ANT_PROCESS_INVERSE_TAU))
+        else if ((process == ENT_PROCESS_INVERSE_MUON) ||
+            (process == ENT_PROCESS_INVERSE_TAU))
                 *value = dcs_inverse(projectile, energy, process, Z, y);
         else
-                return ANT_RETURN_DOMAIN_ERROR;
+                return ENT_RETURN_DOMAIN_ERROR;
 
-        return ANT_RETURN_SUCCESS;
+        return ENT_RETURN_SUCCESS;
 }
 
 #if (GDB_MODE)

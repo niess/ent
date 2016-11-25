@@ -4,7 +4,7 @@ LIBS := -lm
 
 .PHONY: lib examples clean
 
-lib: lib/libant.so
+lib: lib/libent.so
 	@rm -f *.o
 
 examples: bin/example-basic
@@ -18,4 +18,4 @@ lib/lib%.so: src/%.c include/%.h
 
 bin/example-%: examples/example-%.c lib
 	@mkdir -p bin
-	@gcc -o $@ $(CFLAGS) $(INCLUDE) $< -Llib -lant
+	@gcc -o $@ $(CFLAGS) $(INCLUDE) $< -Llib -lent
