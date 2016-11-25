@@ -109,29 +109,33 @@ typedef void ent_handler_cb(enum ent_return code, ent_function_t caller);
 /**
  * Opaque structure for handling neutrinos DCS data.
  */
-struct ent_dcs;
+struct ent_physics;
 
 /**
- * Create a new DCS set.
+ * Create a new Physics environment.
  *
- * @param data    The data file to create the set from.
- * @param dcs     A handle for the DCS set.
+ * @param physics    A handle for the Physics environment.
+ * @param pdf        The PDF file(s) to create the set from.
  *
- * Create a new DCS set from tabulated parton distributions data.
+ * Create a new Physics environment conforming to the Standard Model of
+ * Particle Physics and according to the given tabulations of Parton
+ * Distribution Functions (PDF).
+ *
  */
-enum ent_return ent_dcs_create(const char * data, struct ent_dcs ** dcs);
+enum ent_return ent_physics_create(
+    struct ent_physics ** physics, const char * pdf);
 
 /**
- * Destroy a DCS set.
+ * Destroy a Physics environment.
  *
- * @param dcs     A handle for the DCS set.
+ * @param physics    A handle for the Physics.
  *
- * Release the allocated memory. On exit _dcs_ is set to `NULL`.
+ * Release the allocated memory. On exit _physics_ is set to `NULL`.
  */
-void ent_dcs_destroy(struct ent_dcs ** dcs);
+void ent_physics_destroy(struct ent_physics ** physics);
 
 /**
- * Compute the DCS.
+ * Compute a DCS.
  *
  * @param dcs           A handle for the DCS set.
  * @param projectile    The incoming projectile.
@@ -143,10 +147,11 @@ void ent_dcs_destroy(struct ent_dcs ** dcs);
  * @param y             The energy loss fraction.
  * @param value         The coresponding DCS.
  *
- * Compute the DCS for the given projectile incoming on a target (Z, A) at
- * rest. For an isoscalar nucleon set `Z = 0.5` and `A = 1`.
+ * Compute the Differential Cross-Section (DCS) in the Laboratory frame for
+ * the given projectile incoming on a target (Z, A) at rest. For an isoscalar
+ * nucleon set `Z = 0.5` and `A = 1`.
  */
-enum ent_return ent_dcs_compute(struct ent_dcs * dcs,
+enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_projectile projectile, double energy, double Z, double A,
     enum ent_process process, double x, double y, double * value);
 

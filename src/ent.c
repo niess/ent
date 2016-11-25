@@ -52,6 +52,33 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* Opaque Physics object. */
+struct ent_physics {
+        /* Index to the PDF data. */
+        struct cteq_pdf * pdf;
+        /* Placeholder for dynamic data. */
+        char data[];
+};
+
+/* Compute the padded memory size.
+ *
+ * The padded memory size is the smallest integer multiple of *pad_size* and
+ * greater or equal to *size*. It allows to align memory addresses on multiples
+ * of pad_size.
+ */
+static int memory_padded_size(int size, int pad_size)
+{
+        int i = size / pad_size;
+        if ((size % pad_size) != 0) i++;
+        return i * pad_size;
+}
+
+/* Generic allocator for a Physics object. */
+static void * physics_create(int extra_size)
+{
+        return malloc(sizeof(struct ent_physics) + extra_size);
+}
+
 /* Buffer for reading data from a text file. */
 struct file_buffer {
         jmp_buf env;
@@ -201,19 +228,6 @@ static void file_get_table(
         }
 }
 
-/* Compute the padded memory size.
- *
- * The padded memory size is the smallest integer multiple of *pad_size* and
- * greater or equal to *size*. It allows to align memory addresses on multiples
- * of pad_size.
- */
-static int memory_padded_size(int size, int pad_size)
-{
-        int i = size / pad_size;
-        if ((size % pad_size) != 0) i++;
-        return i * pad_size;
-}
-
 /* Convert Lambda_{QCD} to alpha_S. */
 static double qcd_lambda_to_alpha(
     unsigned int order, unsigned int nf, double q, double lambda)
@@ -288,9 +302,9 @@ struct cteq_pdf {
 #define CTEQ_XPOW 0.3
 
 /* Load PDFs from a .tbl file. */
-static enum ent_return tbl_load(FILE * stream, struct cteq_pdf ** pdf)
+static enum ent_return tbl_load(FILE * stream, struct ent_physics ** physics)
 {
-        *pdf = NULL;
+        *physics = NULL;
         enum ent_return rc;
         struct cteq_pdf header;
         struct file_buffer * buffer = NULL;
@@ -342,78 +356,79 @@ static enum ent_return tbl_load(FILE * stream, struct cteq_pdf ** pdf)
             memory_padded_size(name_length + 1, sizeof(double));
         const unsigned int size =
             sizeof(header) + size_name + 2 * size_x + size_t + size_upd;
-        if ((*pdf = malloc(size)) == NULL) {
+        if ((*physics = physics_create(size)) == NULL) {
                 rc = ENT_RETURN_MEMORY_ERROR;
                 goto exit;
         }
-        memcpy(*pdf, &header, sizeof(header));
-        (*pdf)->name = (*pdf)->data;
-        (*pdf)->xv = (float *)((char *)((*pdf)->name) + size_name);
-        (*pdf)->xvpow = (float *)((char *)((*pdf)->xv) + size_x);
-        (*pdf)->tv = (float *)((char *)((*pdf)->xvpow) + size_x);
-        (*pdf)->upd = (float *)((char *)((*pdf)->tv) + size_t);
+        (*physics)->pdf = (struct cteq_pdf *)(*physics)->data;
+        struct cteq_pdf * const pdf = (*physics)->pdf;
+        memcpy(pdf, &header, sizeof(header));
+        pdf->name = pdf->data;
+        pdf->xv = (float *)((char *)(pdf->name) + size_name);
+        pdf->xvpow = (float *)((char *)(pdf->xv) + size_x);
+        pdf->tv = (float *)((char *)(pdf->xvpow) + size_x);
+        pdf->upd = (float *)((char *)(pdf->tv) + size_t);
 
         /* Read Qinit and Qmax. */
         file_get_line(&buffer, 1);
-        (*pdf)->qini = file_get_float(buffer);
-        (*pdf)->qmax = file_get_float(buffer);
+        pdf->qini = file_get_float(buffer);
+        pdf->qmax = file_get_float(buffer);
 
         /* Read the q values and convert them to t. */
         file_get_line(&buffer, 0);
-        file_get_table(&buffer, (*pdf)->nt + 1, (*pdf)->tv);
-        for (i = 0; i < (*pdf)->nt + 1; i++)
-                (*pdf)->tv[i] =
-                    log(log((*pdf)->tv[i] / (*pdf)->lambda[(*pdf)->nf]));
+        file_get_table(&buffer, pdf->nt + 1, pdf->tv);
+        for (i = 0; i < pdf->nt + 1; i++)
+                pdf->tv[i] = log(log(pdf->tv[i] / pdf->lambda[pdf->nf]));
 
         /* Read xmin. */
         file_get_line(&buffer, 1);
-        (*pdf)->xmin = file_get_float(buffer);
+        pdf->xmin = file_get_float(buffer);
         file_get_line(&buffer, 0);
         file_get_float(buffer); /* Drop the 1st value. */
 
         /* Read the x table. */
-        (*pdf)->xv[0] = 0.;
-        file_get_table(&buffer, (*pdf)->nx, (*pdf)->xv + 1);
+        pdf->xv[0] = 0.;
+        file_get_table(&buffer, pdf->nx, pdf->xv + 1);
 
         /* Compute the xvpow values. */
-        (*pdf)->xvpow[0] = 0.;
-        for (i = 1; i <= (*pdf)->nx; i++)
-                (*pdf)->xvpow[i] = pow((*pdf)->xv[i], CTEQ_XPOW);
+        pdf->xvpow[0] = 0.;
+        for (i = 1; i <= pdf->nx; i++)
+                pdf->xvpow[i] = pow(pdf->xv[i], CTEQ_XPOW);
 
         /* Read the grid. */
         file_get_line(&buffer, 1);
-        file_get_table(&buffer, n_upd, (*pdf)->upd);
+        file_get_table(&buffer, n_upd, pdf->upd);
 
         /* Precompute the lambda values at the thresholds. */
         double as;
         unsigned int nf;
 
-        for (nf = (*pdf)->nf + 1; nf <= 6; nf++) {
-                as = qcd_lambda_to_alpha((*pdf)->order, nf - 1,
-                    (*pdf)->mass[nf], (*pdf)->lambda[nf - 1]);
-                (*pdf)->lambda[nf] = qcd_alpha_to_lambda(
-                    (*pdf)->order, nf, as, (*pdf)->mass[nf]);
+        for (nf = pdf->nf + 1; nf <= 6; nf++) {
+                as = qcd_lambda_to_alpha(
+                    pdf->order, nf - 1, pdf->mass[nf], pdf->lambda[nf - 1]);
+                pdf->lambda[nf] =
+                    qcd_alpha_to_lambda(pdf->order, nf, as, pdf->mass[nf]);
         }
 
         /* Under the charm mass every quark is considered as massless. */
-        for (nf = (*pdf)->nf - 1; nf > 2; nf--) {
-                as = qcd_lambda_to_alpha((*pdf)->order, nf + 1,
-                    (*pdf)->mass[nf + 1], (*pdf)->lambda[nf + 1]);
-                (*pdf)->lambda[nf] = qcd_alpha_to_lambda(
-                    (*pdf)->order, nf, as, (*pdf)->mass[nf + 1]);
+        for (nf = pdf->nf - 1; nf > 2; nf--) {
+                as = qcd_lambda_to_alpha(
+                    pdf->order, nf + 1, pdf->mass[nf + 1], pdf->lambda[nf + 1]);
+                pdf->lambda[nf] =
+                    qcd_alpha_to_lambda(pdf->order, nf, as, pdf->mass[nf + 1]);
         }
 
         /* Roll back and copy the table name. */
         rewind(stream);
         file_get_line(&buffer, 0);
         file_get_word(buffer, 4);
-        memcpy((*pdf)->name, buffer->cursor, name_length + 1);
+        memcpy(pdf->name, buffer->cursor, name_length + 1);
 
 exit:
         free(buffer);
         if (rc != ENT_RETURN_SUCCESS) {
-                free(*pdf);
-                *pdf = NULL;
+                free(*physics);
+                *physics = NULL;
         }
         return rc;
 }
@@ -598,18 +613,17 @@ static double cteq_pdf_compute(
 
 #undef CTEQ_XPOW /* No more needed. */
 
-enum ent_return ent_dcs_create(const char * data, struct ent_dcs ** dcs)
+enum ent_return ent_physics_create(
+    struct ent_physics ** physics, const char * pdf_file)
 {
         enum ent_return rc;
-        *dcs = NULL;
+        *physics = NULL;
 
         FILE * stream;
         rc = ENT_RETURN_PATH_ERROR;
-        if ((stream = fopen(data, "r")) == NULL) goto exit;
+        if ((stream = fopen(pdf_file, "r")) == NULL) goto exit;
 
-        struct cteq_pdf * pdf;
-        if ((rc = tbl_load(stream, &pdf)) != ENT_RETURN_SUCCESS) goto exit;
-        *dcs = (struct ent_dcs *)pdf;
+        if ((rc = tbl_load(stream, physics)) != ENT_RETURN_SUCCESS) goto exit;
         rc = ENT_RETURN_SUCCESS;
 
 exit:
@@ -617,23 +631,23 @@ exit:
         return rc;
 }
 
-void ent_dcs_destroy(struct ent_dcs ** dcs)
+void ent_physics_destroy(struct ent_physics ** physics)
 {
-        if ((dcs == NULL) || (*dcs == NULL)) return;
+        if ((physics == NULL) || (*physics == NULL)) return;
 
-        free(*dcs);
-        *dcs = NULL;
+        free(*physics);
+        *physics = NULL;
 }
 
-/* DCS for Deep Inelastic Scattering (DIS). */
-static double dcs_dis(struct ent_dcs * dcs, enum ent_projectile projectile,
-    double energy, double Z, double A, enum ent_process process, double x,
-    double y)
+/* DCS for Deep Inelastic Scattering (DIS) on nucleons. */
+static double dcs_dis(struct ent_physics * physics,
+    enum ent_projectile projectile, double energy, double Z, double A,
+    enum ent_process process, double x, double y)
 {
         /* Compute the PDF. */
         const double Q2 = 2. * x * y * ENT_MASS_NUCLEON * energy;
         const double q = sqrt(Q2);
-        struct cteq_pdf * pdf = (struct cteq_pdf *)dcs;
+        const struct cteq_pdf * const pdf = physics->pdf;
         int eps = (projectile > 0) ? 1 : -1; /* CP? */
         const double N = A - Z;              /* Number of neutrons. */
         double factor;
@@ -770,8 +784,8 @@ static double dcs_inverse(enum ent_projectile projectile, double energy,
             (ENT_PHYS_GF * ENT_PHYS_HBC) * 2. * r * r * factor / M_PI;
 }
 
-/* Generic API function for computing the DCS. */
-enum ent_return ent_dcs_compute(struct ent_dcs * dcs,
+/* Generic API function for computing DCSs. */
+enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_projectile projectile, double energy, double Z, double A,
     enum ent_process process, double x, double y, double * value)
 {
@@ -785,7 +799,8 @@ enum ent_return ent_dcs_compute(struct ent_dcs * dcs,
                 *value = dcs_elastic(projectile, energy, Z, y);
         else if ((process == ENT_PROCESS_DIS_CC) ||
             (process == ENT_PROCESS_DIS_NC))
-                *value = dcs_dis(dcs, projectile, energy, Z, A, process, x, y);
+                *value =
+                    dcs_dis(physics, projectile, energy, Z, A, process, x, y);
         else if ((process == ENT_PROCESS_INVERSE_MUON) ||
             (process == ENT_PROCESS_INVERSE_TAU))
                 *value = dcs_inverse(projectile, energy, process, Z, y);
