@@ -26,21 +26,21 @@ int main()
         ent_error_handler_set(&handle_error);
 
         /* Create a new Physics environment. */
-        ent_physics_create(&physics, "data/pdf/cteq6d.tbl");
+        ent_physics_create(&physics, "data/pdf/CT14nnlo_0000.dat");
 
         /* Test some DCS. */
-        const double energy = 6.3E+06;
-        const double x = 1E-05;
+        const double energy = 1E+12;
+        const double x = 1E-02;
         const double y = 1E-02;
         double dcs;
-        ent_physics_dcs(physics, ENT_PROJECTILE_NU_E_BAR, energy, 0.5, 1.,
-            ENT_PROCESS_GLASHOW_HADRON, x, y, &dcs);
+        ent_physics_dcs(physics, ENT_PROJECTILE_NU_TAU, energy, 0.5, 1.,
+            ENT_PROCESS_DIS_CC, x, y, &dcs);
         printf("DCS(%.5lE, %.5lE, %.5lE) = %.5lE\n", energy, x, y, dcs);
 
-        const double q2 = energy * x * y * 0.931;
+        const double Q2 = energy * x * y * 0.931;
         double pdf;
-        ent_physics_pdf(physics, ENT_PARTON_U, 0.5, q2, &pdf);
-        printf("PDF(%.5lE, %.5lE) = %.5lE\n", x, q2, pdf);
+        ent_physics_pdf(physics, ENT_PARTON_U, x, Q2, &pdf);
+        printf("x * PDF(%.5lE, %.5lE) = %.5lE\n", x, Q2, pdf * x);
 
         /* Finalise and exit to the OS. */
         ent_physics_destroy(&physics);

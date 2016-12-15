@@ -100,11 +100,11 @@ enum ent_parton {
         /** The charm anti-quark. */
         ENT_PARTON_C_BAR = -4,
         /** The strange anti-quark. */
-        ENT_PARTON_S_BAR = -6,
+        ENT_PARTON_S_BAR = -3,
         /** The up anti-quark. */
-        ENT_PARTON_U_BAR = -5,
+        ENT_PARTON_U_BAR = -2,
         /** The down anti-quark */
-        ENT_PARTON_D_BAR = -4,
+        ENT_PARTON_D_BAR = -1,
         /** The gluon. */
         ENT_PARTON_GLUON = 0,
         /** The down quark. */
