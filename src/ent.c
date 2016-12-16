@@ -18,6 +18,7 @@
 
 /* Standard library includes. */
 #include <ctype.h>
+#include <float.h>
 #include <math.h>
 #include <setjmp.h>
 #include <stdio.h>
@@ -50,15 +51,59 @@
 /* The Weinberg angle at MZ, as sin(theta_W)^2. */
 #define ENT_PHYS_SIN_THETA_W_2 0.231295
 
-/* Kinetic range for tabulations. */
-#define KINETIC_MIN 1E+03
-#define KINETIC_MAX 1E+12
-#define KINETIC_N 181
+/* Energy range for tabulations. */
+#define ENERGY_MIN 1E+03
+#define ENERGY_MAX 1E+12
+#define ENERGY_N 181
 
 #ifndef M_PI
 /* Define pi, if unknown. */
 #define M_PI 3.14159265358979323846
 #endif
+
+/* Indices for Physics processes with a specific projectile and target. */
+enum proget_index {
+        /* Charged current DIS of a neutrino on a neutron. */
+        PROGET_CC_NU_NEUTRON = 0,
+        /* Neutral current DIS of a neutrino on a neutron. */
+        PROGET_NC_NU_NEUTRON,
+        /* Charged current DIS of an anti-neutrino on a neutron. */
+        PROGET_CC_NU_BAR_NEUTRON,
+        /* Neutral current DIS of an anti-neutrino on a neutron. */
+        PROGET_NC_NU_BAR_NEUTRON,
+        /* Charged current DIS of a neutrino on a proton. */
+        PROGET_CC_NU_PROTON,
+        /* Neutral current DIS of a neutrino on a proton. */
+        PROGET_NC_NU_PROTON,
+        /* Charged current DIS of an anti-neutrino on a proton. */
+        PROGET_CC_NU_BAR_PROTON,
+        /* Neutral current DIS of an anti-neutrino on a proton. */
+        PROGET_NC_NU_BAR_PROTON,
+        /* Elastic scattering of a nu_e on a an electron. */
+        PROGET_ELASTIC_NU_E,
+        /* Elastic scattering of an anti nu_e on a an electron. */
+        PROGET_ELASTIC_NU_E_BAR,
+        /* Elastic scattering of a nu_mu on a an electron. */
+        PROGET_ELASTIC_NU_MU,
+        /* Elastic scattering of an anti nu_mu on a an electron. */
+        PROGET_ELASTIC_NU_MU_BAR,
+        /* Elastic scattering of a nu_tau on a an electron. */
+        PROGET_ELASTIC_NU_TAU,
+        /* Elastic scattering of an anti nu_tau on a an electron. */
+        PROGET_ELASTIC_NU_TAU_BAR,
+        /* Inverse muon decay with a nu_mu projectile. */
+        PROGET_INVERSE_NU_MU_MU,
+        /* Inverse tau decay with a nu_tau projectile. */
+        PROGET_INVERSE_NU_TAU_TAU,
+        /* Inverse muon decay with an anti nu_e projectile. */
+        PROGET_INVERSE_NU_E_BAR_MU,
+        /* Inverse tau decay with an anti nu_e projectile. */
+        PROGET_INVERSE_NU_E_BAR_TAU,
+        /* Anti nu_e projectile on an electron with hadrons production. */
+        PROGET_GLASHOW_HADRONS,
+        /* Number of PROcess-projectile-tarGET cases. */
+        PROGET_N
+};
 
 /* Opaque Physics object. */
 struct ent_physics {
@@ -87,7 +132,7 @@ static int memory_padded_size(int size, int pad_size)
 static void * physics_create(int extra_size)
 {
         void * v = malloc(sizeof(struct ent_physics) + extra_size +
-            35 * KINETIC_N * sizeof(double));
+            PROGET_N * ENERGY_N * sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
         p->table = (double *)(p->data + extra_size);
@@ -223,9 +268,8 @@ static enum ent_return file_get_line_(struct file_buffer ** buffer, int skip)
                         if (ptr[size - 1] == check) break;
 
                         /* Get more memory then ... */
-                        void * tmp =
-                            realloc(*buffer, sizeof(**buffer) + (*buffer)->size
-                                + FILE_BLOCK_SIZE);
+                        void * tmp = realloc(*buffer, sizeof(**buffer) +
+                                (*buffer)->size + FILE_BLOCK_SIZE);
                         if (tmp == NULL) return ENT_RETURN_MEMORY_ERROR;
                         *buffer = tmp;
                         ptr = (*buffer)->line + (*buffer)->size - 1;
@@ -302,7 +346,7 @@ struct lha_pdf {
         /* The table size. */
         int nx, nQ2, nf;
         /* Links to the data tables. */
-        float * x, * Q2, * lambda, * xfx;
+        float *x, *Q2, *lambda, *xfx;
         /* Placeholder for variable size data. */
         float data[];
 };
@@ -332,7 +376,8 @@ static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
                 file_get_line(&buffer, 0);
                 if (strlen(buffer->cursor) < 3) continue;
                 if ((buffer->cursor[0] == '-') && (buffer->cursor[1] == '-') &&
-                    (buffer->cursor[2] == '-')) break;
+                    (buffer->cursor[2] == '-'))
+                        break;
         }
         long int pos = ftell(stream);
 
@@ -343,7 +388,7 @@ static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
         const int nQ = file_count_words(buffer);
         file_get_line(&buffer, 0);
         const int nf = file_count_words(buffer);
-        if ((nf != LHAPDF_NF_MAX-2) && (nf != LHAPDF_NF_MAX)) {
+        if ((nf != LHAPDF_NF_MAX - 2) && (nf != LHAPDF_NF_MAX)) {
                 rc = ENT_RETURN_FORMAT_ERROR;
                 goto exit;
         }
@@ -354,11 +399,11 @@ static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
         const unsigned int size_Q =
             memory_padded_size(nQ * sizeof(float), sizeof(double));
         const unsigned int size_lambda =
-                memory_padded_size(nf * nQ * sizeof(float), sizeof(double));
+            memory_padded_size(nf * nQ * sizeof(float), sizeof(double));
         const unsigned int size_xfx =
             memory_padded_size(nf * nx * nQ * sizeof(float), sizeof(double));
-        unsigned int size = sizeof(struct lha_pdf) + size_x + size_Q +
-            size_lambda + size_xfx;
+        unsigned int size =
+            sizeof(struct lha_pdf) + size_x + size_Q + size_lambda + size_xfx;
         if ((*physics = physics_create(size)) == NULL) {
                 rc = ENT_RETURN_MEMORY_ERROR;
                 goto exit;
@@ -389,8 +434,10 @@ static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
         int i;
         for (i = 0; i < nQ; i++) pdf->Q2[i] *= pdf->Q2[i];
         for (i = 0; i < nf; i++) {
-                if (row[i] == 21.) index[i] = pdf->nf;
-                else index[i] = (int)row[i] + pdf->nf;
+                if (row[i] == 21.)
+                        index[i] = pdf->nf;
+                else
+                        index[i] = (int)row[i] + pdf->nf;
                 if ((index[i] < 0) || (index[i] >= nf)) {
                         rc = ENT_RETURN_FORMAT_ERROR;
                         goto exit;
@@ -435,12 +482,13 @@ exit:
 }
 
 /* Recursive bracketing of a table value, using a dichotomy. */
-static void table_bracket(
-    const float * table, float value, int * p1, int * p2)
+static void table_bracket(const float * table, float value, int * p1, int * p2)
 {
         int i3 = (*p1 + *p2) / 2;
-        if (value >= table[i3]) *p1 = i3;
-        else *p2 = i3;
+        if (value >= table[i3])
+                *p1 = i3;
+        else
+                *p2 = i3;
         if (*p2 - *p1 >= 2) table_bracket(table, value, p1, p2);
 }
 
@@ -450,8 +498,9 @@ static void lha_pdf_compute(
         memset(xfx, 0x0, LHAPDF_NF_MAX * sizeof(*xfx));
 
         /* Check the bounds. */
-        if ((Q2 < pdf->Q2[0]) || (Q2 >= pdf->Q2[pdf->nQ2-1]) ||
-            (x >= pdf->x[pdf->nx-1])) return;
+        if ((Q2 < pdf->Q2[0]) || (Q2 >= pdf->Q2[pdf->nQ2 - 1]) ||
+            (x >= pdf->x[pdf->nx - 1]))
+                return;
 
         if (x < pdf->x[0]) {
                 /* Extrapolate with a power law for small x values, i.e.
@@ -459,15 +508,15 @@ static void lha_pdf_compute(
                  */
                 int iQ0, iQ1;
                 float hQ;
-                if (Q2 >= pdf->Q2[pdf->nQ2-1]) {
-                        iQ0 = iQ1 = pdf->nQ2 -1;
+                if (Q2 >= pdf->Q2[pdf->nQ2 - 1]) {
+                        iQ0 = iQ1 = pdf->nQ2 - 1;
                         hQ = 1.;
-                }
-                else {
+                } else {
                         iQ0 = 0;
-                        iQ1 = pdf->nQ2 -1;
+                        iQ1 = pdf->nQ2 - 1;
                         table_bracket(pdf->Q2, Q2, &iQ0, &iQ1);
-                        hQ = (Q2 - pdf->Q2[iQ0]) / (pdf->Q2[iQ1] - pdf->Q2[iQ0]);
+                        hQ =
+                            (Q2 - pdf->Q2[iQ0]) / (pdf->Q2[iQ1] - pdf->Q2[iQ0]);
                 }
 
                 int i, nf = 2 * pdf->nf + 1;
@@ -478,35 +527,43 @@ static void lha_pdf_compute(
                 for (i = 0; i < nf; i++) {
                         const float y0 = lambda0[i];
                         const float y1 = lambda1[i];
-                        if ((y0 <= 0.) || (y1 <= 0.)) xfx[i] = 0.;
+                        if ((y0 <= 0.) || (y1 <= 0.))
+                                xfx[i] = 0.;
                         else {
                                 const float lambda = y0 * (1. - hQ) + y1 * hQ;
                                 xfx[i] = (xfx0[i] * (1. - hQ) + xfx1[i] * hQ) *
                                     pow(x / pdf->x[0], -lambda);
                         }
                 }
-        }
-        else {
+        } else {
                 /* We are within the table bounds. Let's locate the bracketing
                  * table rows.
                  */
-                int ix0 = 0, ix1 = pdf->nx - 1, iQ0 = 0, iQ1 = pdf->nQ2 -1;
+                int ix0 = 0, ix1 = pdf->nx - 1, iQ0 = 0, iQ1 = pdf->nQ2 - 1;
                 table_bracket(pdf->x, x, &ix0, &ix1);
                 table_bracket(pdf->Q2, Q2, &iQ0, &iQ1);
-                const float hx = (x - pdf->x[ix0]) / (pdf->x[ix1] - pdf->x[ix0]);
-                const float hQ = (Q2 - pdf->Q2[iQ0]) / (pdf->Q2[iQ1] - pdf->Q2[iQ0]);
+                const float hx =
+                    (x - pdf->x[ix0]) / (pdf->x[ix1] - pdf->x[ix0]);
+                const float hQ =
+                    (Q2 - pdf->Q2[iQ0]) / (pdf->Q2[iQ1] - pdf->Q2[iQ0]);
 
                 /* Interpolate the PDFs. */
                 int i, nf = 2 * pdf->nf + 1;
-                const float * const xfx00 = pdf->xfx + (ix0 * pdf->nQ2 + iQ0) * nf;
-                const float * const xfx01 = pdf->xfx + (ix0 * pdf->nQ2 + iQ1) * nf;
-                const float * const xfx10 = pdf->xfx + (ix1 * pdf->nQ2 + iQ0) * nf;
-                const float * const xfx11 = pdf->xfx + (ix1 * pdf->nQ2 + iQ1) * nf;
+                const float * const xfx00 =
+                    pdf->xfx + (ix0 * pdf->nQ2 + iQ0) * nf;
+                const float * const xfx01 =
+                    pdf->xfx + (ix0 * pdf->nQ2 + iQ1) * nf;
+                const float * const xfx10 =
+                    pdf->xfx + (ix1 * pdf->nQ2 + iQ0) * nf;
+                const float * const xfx11 =
+                    pdf->xfx + (ix1 * pdf->nQ2 + iQ1) * nf;
                 const float r00 = (1. - hx) * (1. - hQ);
                 const float r01 = (1. - hx) * hQ;
                 const float r10 = hx * (1. - hQ);
                 const float r11 = hx * hQ;
-                for (i = 0; i < nf; i++) xfx[i] = r00 * xfx00[i] + r01 * xfx01[i] + r10 * xfx10[i] + r11 * xfx11[i];
+                for (i = 0; i < nf; i++)
+                        xfx[i] = r00 * xfx00[i] + r01 * xfx01[i] +
+                            r10 * xfx10[i] + r11 * xfx11[i];
         }
 }
 
@@ -524,22 +581,18 @@ static double dcs_dis(struct ent_physics * physics,
         /* Compute the relevant structure functions. */
         const int eps = (projectile > 0) ? 1 : -1; /* CP? */
         const int nf = pdf->nf;
-        const double N = A - Z;                    /* Number of neutrons. */
+        const double N = A - Z; /* Number of neutrons. */
         double factor;
         if (process == ENT_PROCESS_DIS_CC) {
                 /* Charged current DIS process. */
-                const double d =
-                    (Z <= 0.) ? 0. : xfx[1 * eps + nf];
-                const double u =
-                    (N <= 0.) ? 0. : xfx[2 * eps + nf];
+                const double d = (Z <= 0.) ? 0. : xfx[1 * eps + nf];
+                const double u = (N <= 0.) ? 0. : xfx[2 * eps + nf];
                 const double s = xfx[3 * eps + nf];
                 const double b = xfx[5 * eps + nf];
                 const double F1 = Z * d + N * u + A * (s + b);
 
-                const double dbar =
-                    (N <= 0.) ? 0. : xfx[-1 * eps + nf];
-                const double ubar =
-                    (Z <= 0.) ? 0. : xfx[-2 * eps + nf];
+                const double dbar = (N <= 0.) ? 0. : xfx[-1 * eps + nf];
+                const double ubar = (Z <= 0.) ? 0. : xfx[-2 * eps + nf];
                 const double cbar = xfx[-4 * eps + nf];
                 const double F2 = N * dbar + Z * ubar + A * cbar;
 
@@ -627,7 +680,7 @@ static double dcs_elastic(
 
 /* DCS for inelastic scattering on electrons. */
 static double dcs_inverse(enum ent_projectile projectile, double energy,
-    enum ent_process process, double Z, double y)
+    double Z, enum ent_process process, double y)
 {
         if ((projectile != ENT_PROJECTILE_NU_E_BAR) &&
             ((projectile != ENT_PROJECTILE_NU_MU) ||
@@ -660,8 +713,8 @@ static double dcs_inverse(enum ent_projectile projectile, double energy,
 }
 
 /* DCS for hadron(s) production by Glashow's resonance. */
-static double dcs_glashow(enum ent_projectile projectile, double energy,
-    enum ent_process process, double Z, double y)
+static double dcs_glashow(
+    enum ent_projectile projectile, double energy, double Z, double y)
 {
         if (projectile != ENT_PROJECTILE_NU_E_BAR) return 0.;
 
@@ -669,10 +722,28 @@ static double dcs_glashow(enum ent_projectile projectile, double energy,
             dcs_inverse(projectile, energy, ENT_PROCESS_INVERSE_MUON, Z, y);
 }
 
-/* Compute the total cross-section for DIS processes using a Gaussian
+/* Compute the DCS for a given process, projectile and target. */
+double dcs_compute(struct ent_physics * physics, enum ent_projectile projectile,
+    double energy, double Z, double A, enum ent_process process, double x,
+    double y)
+{
+        if ((process == ENT_PROCESS_DIS_CC) || (process == ENT_PROCESS_DIS_NC))
+                return dcs_dis(
+                    physics, projectile, energy, Z, A, process, x, y);
+        else if (process == ENT_PROCESS_ELASTIC)
+                return dcs_elastic(projectile, energy, Z, y);
+        else if ((process == ENT_PROCESS_INVERSE_MUON) ||
+            (process == ENT_PROCESS_INVERSE_TAU))
+                return dcs_inverse(projectile, energy, Z, process, y);
+        else if (process == ENT_PROCESS_GLASHOW_HADRON)
+                return dcs_glashow(projectile, energy, Z, y);
+        return -DBL_MAX;
+}
+
+/* Compute the total cross-section for a processes using a Gaussian
  * quadrature.
  */
-static double dcs_dis_integrate(struct ent_physics * physics,
+static double dcs_integrate(struct ent_physics * physics,
     enum ent_projectile projectile, double energy, double Z, double A,
     enum ent_process process)
 {
@@ -690,40 +761,87 @@ static double dcs_dis_integrate(struct ent_physics * physics,
                 0.3123470770400029, 0.3123470770400029, 0.2606106964029354,
                 0.2606106964029354 };
 
-        const double ymin = 1E-12;
-        const double xmin = 1E-12;
-        const int nx = 3;
-        const int ny = 3;
-        const double dlx = -log(xmin) / nx;
-        const double dly = -log(ymin) / ny;
-        double I = 0.;
-        int i, j;
-        for (i = 0; i < ny * N_GQ; i++) {
-                const double y = ymin * exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dly);
-                double J = 0.;
-                for (j = 0; j < nx * N_GQ; j++) {
-                        const double x = xmin * exp((0.5 + 0.5 * xGQ[j % N_GQ] + j / N_GQ) * dlx);
-                        J += wGQ[j % N_GQ] * x * dcs_dis(physics, projectile, energy,
-                            Z, A, process, x, y);
+        if ((process == ENT_PROCESS_DIS_CC) ||
+            (process == ENT_PROCESS_DIS_NC)) {
+                /* Deep Inelastic Scattering requires a double integral. */
+                const double ymin = 1E-12;
+                const double xmin = 1E-12;
+                const int nx = 3;
+                const int ny = 3;
+                const double dlx = -log(xmin) / nx;
+                const double dly = -log(ymin) / ny;
+                double I = 0.;
+                int i, j;
+                for (i = 0; i < ny * N_GQ; i++) {
+                        const double y = ymin *
+                            exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dly);
+                        double J = 0.;
+                        for (j = 0; j < nx * N_GQ; j++) {
+                                const double x = xmin *
+                                    exp((0.5 + 0.5 * xGQ[j % N_GQ] + j / N_GQ) *
+                                                     dlx);
+                                J += wGQ[j % N_GQ] * x *
+                                    dcs_compute(physics, projectile, energy, Z,
+                                         A, process, x, y);
+                        }
+                        I += wGQ[i % N_GQ] * y * J;
                 }
-                I += wGQ[i % N_GQ] * y * J;
+                return 0.25 * I * dlx * dly;
+        } else {
+                /* Scattering on an atomic electron. */
+                const double ymin = 1E-06;
+                const int ny = 6;
+                const double dly = -log(ymin) / ny;
+                double I = 0.;
+                int i;
+                for (i = 0; i < ny * N_GQ; i++) {
+                        const double y = ymin *
+                            exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dly);
+                        I += wGQ[i % N_GQ] * y * dcs_compute(physics,
+                                                     projectile, energy, Z, A,
+                                                     process, 0., y);
+                }
+                return 0.5 * I * dly;
         }
-        return 0.25 * I * dlx * dly;
-#undef  N_GQ
+#undef N_GQ
 }
 
 /* Tabulate the interactions lengths and processes weights. */
 static void physics_tabulate(struct ent_physics * physics)
 {
-        const enum ent_projectile projectile = ENT_PROJECTILE_NU_TAU;
-        const enum ent_process process = ENT_PROCESS_DIS_CC;
-        const double energy = 1E+12;
-        const double Z = 0.5;
-        const double A = 1.;
+        const enum ent_process process[PROGET_N] = { ENT_PROCESS_DIS_CC,
+                ENT_PROCESS_DIS_NC, ENT_PROCESS_DIS_CC, ENT_PROCESS_DIS_NC,
+                ENT_PROCESS_DIS_CC, ENT_PROCESS_DIS_NC, ENT_PROCESS_DIS_CC,
+                ENT_PROCESS_DIS_NC, ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC,
+                ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC,
+                ENT_PROCESS_ELASTIC, ENT_PROCESS_INVERSE_MUON,
+                ENT_PROCESS_INVERSE_TAU, ENT_PROCESS_INVERSE_MUON,
+                ENT_PROCESS_INVERSE_TAU, ENT_PROCESS_GLASHOW_HADRON };
+        const enum ent_projectile projectile[PROGET_N] = { ENT_PROJECTILE_NU_E,
+                ENT_PROJECTILE_NU_E, ENT_PROJECTILE_NU_E_BAR,
+                ENT_PROJECTILE_NU_E_BAR, ENT_PROJECTILE_NU_E,
+                ENT_PROJECTILE_NU_E, ENT_PROJECTILE_NU_E_BAR,
+                ENT_PROJECTILE_NU_E_BAR, ENT_PROJECTILE_NU_E,
+                ENT_PROJECTILE_NU_E_BAR, ENT_PROJECTILE_NU_MU,
+                ENT_PROJECTILE_NU_MU_BAR, ENT_PROJECTILE_NU_TAU,
+                ENT_PROJECTILE_NU_TAU_BAR, ENT_PROJECTILE_NU_MU,
+                ENT_PROJECTILE_NU_TAU, ENT_PROJECTILE_NU_E_BAR,
+                ENT_PROJECTILE_NU_E_BAR, ENT_PROJECTILE_NU_E_BAR };
 
-        const double I = dcs_dis_integrate(physics, projectile,
-            energy, Z, A, process);
-        printf("I = %.5lE\n", I);
+        const double dlE = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
+        double * table;
+        int i;
+        for (i = 0, table = physics->table; i < ENERGY_N;
+             i++, table += PROGET_N) {
+                const double energy = ENERGY_MIN * exp(i * dlE);
+                int j;
+                for (j = 0; j < PROGET_N; j++) {
+                        const double Z =
+                            (j <= PROGET_NC_NU_BAR_NEUTRON) ? 0. : 1.;
+                        table[j] = dcs_integrate(
+                            physics, projectile[j], energy, Z, 1., process[j]);
+                }
+        }
 }
 
 /* API constructor for a Physics object. */
@@ -773,20 +891,10 @@ enum ent_return ent_physics_dcs(struct ent_physics * physics,
                 ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
 
         /* Compute the corresponding DCS. */
-        if (process == ENT_PROCESS_ELASTIC)
-                *dcs = dcs_elastic(projectile, energy, Z, y);
-        else if ((process == ENT_PROCESS_DIS_CC) ||
-            (process == ENT_PROCESS_DIS_NC))
-                *dcs =
-                    dcs_dis(physics, projectile, energy, Z, A, process, x, y);
-        else if ((process == ENT_PROCESS_INVERSE_MUON) ||
-            (process == ENT_PROCESS_INVERSE_TAU))
-                *dcs = dcs_inverse(projectile, energy, process, Z, y);
-        else if (process == ENT_PROCESS_GLASHOW_HADRON)
-                *dcs = dcs_glashow(projectile, energy, process, Z, y);
-        else
-                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
-
+        const double d =
+            dcs_compute(physics, projectile, energy, Z, A, process, x, y);
+        if (d == -DBL_MAX) ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        *dcs = d;
         return ENT_RETURN_SUCCESS;
 }
 
