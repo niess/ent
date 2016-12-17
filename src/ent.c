@@ -50,6 +50,8 @@
 #define ENT_PHYS_HBC 1.97326978E-16
 /* The Weinberg angle at MZ, as sin(theta_W)^2. */
 #define ENT_PHYS_SIN_THETA_W_2 0.231295
+/* Avogadro's number, in mol^-1. */
+#define ENT_PHYS_NA 6.022E+23
 
 /* Energy range for tabulations. */
 #define ENERGY_MIN 1E+03
@@ -109,8 +111,8 @@ enum proget_index {
 struct ent_physics {
         /* Index to the PDF data. */
         struct lha_pdf * pdf;
-        /* Entry point for the tabulations. */
-        double * table;
+        /* Entry point for the total cross-sections. */
+        double * cs;
         /* Placeholder for dynamic data. */
         char data[];
 };
@@ -135,7 +137,7 @@ static void * physics_create(int extra_size)
             PROGET_N * ENERGY_N * sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
-        p->table = (double *)(p->data + extra_size);
+        p->cs = (double *)(p->data + extra_size);
         return v;
 }
 
@@ -163,6 +165,7 @@ const char * ent_error_function(ent_function_t * caller)
         REGISTER_FUNCTION(ent_physics_create);
         REGISTER_FUNCTION(ent_physics_dcs);
         REGISTER_FUNCTION(ent_physics_pdf);
+        REGISTER_FUNCTION(ent_transport);
 
         /* Other API functions. */
         REGISTER_FUNCTION(ent_physics_destroy);
@@ -831,8 +834,7 @@ static void physics_tabulate(struct ent_physics * physics)
         const double dlE = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
         double * table;
         int i;
-        for (i = 0, table = physics->table; i < ENERGY_N;
-             i++, table += PROGET_N) {
+        for (i = 0, table = physics->cs; i < ENERGY_N; i++, table += PROGET_N) {
                 const double energy = ENERGY_MIN * exp(i * dlE);
                 int j;
                 for (j = 0; j < PROGET_N; j++) {
@@ -915,6 +917,337 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
         lha_pdf_compute(pdf, x, Q2, xfx);
         *value = xfx[pdf->nf + parton] / x;
         return ENT_RETURN_SUCCESS;
+}
+
+/* Do a transport step and/or update/initialise the local properties of the
+ * propagation medium.
+ */
+static enum ent_return transport_step(struct ent_context * context,
+    struct ent_state * state, struct ent_medium ** medium, double * step,
+    double * density, double grammage_max, enum ent_event * event)
+{
+/* Stepping resolution, in m, for locating the interface between two media. */
+#define STEP_MIN 1E-06
+
+        *event = ENT_EVENT_NONE;
+        const double sgn = context->forward ? 1. : -1.;
+        if (*step > 0.) {
+                /* Apply any distance limit. */
+                if ((context->distance_max > 0.) &&
+                    (state->distance + *step > context->distance_max)) {
+                        *step = context->distance_max - state->distance;
+                        if (*step < 0.) *step = 0.;
+                        *event = ENT_EVENT_LIMIT_DISTANCE;
+                }
+
+                /* Start with a tentative step, if not an initialisation. */
+                if (*step) {
+                        state->position[0] +=
+                            sgn * state->direction[0] * (*step);
+                        state->position[1] +=
+                            sgn * state->direction[1] * (*step);
+                        state->position[2] +=
+                            sgn * state->direction[2] * (*step);
+                }
+        }
+
+        /* Check the new medium. */
+        struct ent_medium * medium1;
+        double step1 = context->medium(state, &medium1);
+        double ds_boundary = 0.;
+        if (*medium == NULL) {
+                /* initialisation step. */
+                *medium = medium1;
+                if (medium1 == NULL) {
+                        *event = ENT_EVENT_EXIT;
+                        return ENT_RETURN_SUCCESS;
+                }
+        } else if ((*medium != NULL) && (medium1 != *medium)) {
+                /* A change of medium occured. Let's locate the interface
+                 * by dichotomy.
+                 */
+                double pi[3];
+                memcpy(pi, state->position, sizeof(pi));
+                double s1 = 0., s2 = -(*step);
+                while (fabs(s1 - s2) > STEP_MIN) {
+                        double s3 = 0.5 * (s1 + s2);
+                        state->position[0] =
+                            pi[0] + s3 * sgn * state->direction[0];
+                        state->position[1] =
+                            pi[1] + s3 * sgn * state->direction[1];
+                        state->position[2] =
+                            pi[2] + s3 * sgn * state->direction[2];
+                        step1 = context->medium(state, &medium1);
+                        if (medium1 == *medium)
+                                s1 = s3;
+                        else
+                                s2 = s3;
+                }
+                state->position[0] = pi[0] + s2 * sgn * state->direction[0];
+                state->position[1] = pi[1] + s2 * sgn * state->direction[1];
+                state->position[2] = pi[2] + s2 * sgn * state->direction[2];
+                *step += s1;
+                ds_boundary = s1 - s2;
+        }
+
+        /* Get the end step local properties. */
+        double density1;
+        const double step2 = (*medium)->density(*medium, state, &density1);
+        if ((density1 < 0.) || ((*medium)->A <= 0.))
+                return ENT_RETURN_DOMAIN_ERROR;
+        if (step2 > 0.) {
+                if ((step1 <= 0.) || (step2 < step1)) step1 = step2;
+        }
+
+        /* Offset the end step position if a boundary crossing occured. */
+        if (ds_boundary != 0.) {
+                state->position[0] += ds_boundary * sgn * state->direction[0];
+                state->position[1] += ds_boundary * sgn * state->direction[1];
+                state->position[2] += ds_boundary * sgn * state->direction[2];
+                *medium = medium1;
+                *step += ds_boundary;
+
+                /* Reset any distance limit if no more valid. */
+                if ((context->distance_max > 0.) &&
+                    (state->distance + *step < context->distance_max))
+                        *event = ENT_EVENT_NONE;
+        }
+
+        /* Check for a grammage limit. */
+        if (*step > 0.) {
+                double dX = 0.5 * (*density + density1) * (*step);
+                if ((grammage_max > 0.) &&
+                    (state->grammage + dX > grammage_max)) {
+                        /* Roll back the position and update. */
+                        const double dX = grammage_max - state->grammage;
+                        double ds;
+                        const double drho = density1 - *density;
+                        if (fabs(drho) < 1E-03) {
+                                ds = 2. * dX / (density1 + *density) - *step;
+                        } else {
+                                ds = *step * ((sqrt(density1 * density1 +
+                                                   2. * dX * drho / *step) -
+                                                  density1) /
+                                                     drho -
+                                                 1.);
+                        }
+                        state->grammage = grammage_max;
+                        state->position[0] += ds * sgn * state->direction[0];
+                        state->position[1] += ds * sgn * state->direction[1];
+                        state->position[2] += ds * sgn * state->direction[2];
+                        *step += ds;
+                        *event = ENT_EVENT_LIMIT_GRAMMAGE;
+                } else {
+                        state->grammage += dX;
+                }
+                state->distance += *step;
+        }
+
+        /* Update and return. */
+        *step = (step1 < 0) ? 0. : step1;
+        *density = density1;
+        return ENT_RETURN_SUCCESS;
+
+#undef STEP_MIN
+}
+
+/* Do a straight transport step in a uniform medium of infinite extension. */
+static enum ent_event transport_straight(struct ent_context * context,
+    struct ent_state * state, double density, double grammage_max)
+{
+        enum ent_event event;
+        double ds = (grammage_max - state->grammage) / density;
+        if ((context->distance_max > 0.) &&
+            (state->distance + ds >= context->distance_max)) {
+                ds = context->distance_max - state->distance;
+                state->distance = context->distance_max;
+                state->grammage += ds * density;
+                event = ENT_EVENT_LIMIT_DISTANCE;
+        } else {
+                state->distance += ds;
+                state->grammage = grammage_max;
+                event = ENT_EVENT_LIMIT_GRAMMAGE;
+        }
+
+        /* Update the position. */
+        const double sgn = context->forward ? 1. : -1.;
+        state->position[0] += sgn * state->direction[0] * ds;
+        state->position[1] += sgn * state->direction[1] * ds;
+        state->position[2] += sgn * state->direction[2] * ds;
+
+        return event;
+}
+
+/* Compute the tranport cross-sections for a given projectile and medium. */
+static enum ent_return transport_cross_section(struct ent_physics * physics,
+    enum ent_projectile projectile, double energy, double Z, double A,
+    double * cs)
+{
+        /* Build the interpolation factors. */
+        int i0, i1;
+        double h;
+        if (energy < ENERGY_MIN) {
+                i0 = i1 = 0.;
+                h = 0.;
+        } else if (energy >= ENERGY_MAX) {
+                i0 = i1 = ENERGY_N - 1;
+                h = 1.;
+        } else {
+                const double dle =
+                    log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
+                h = log(energy / ENERGY_MIN) / dle;
+                i0 = (int)h;
+                i1 = i0 + 1;
+                h -= i0;
+        }
+        const double * const cs0 = physics->cs + i0 * PROGET_N;
+        const double * const cs1 = physics->cs + i1 * PROGET_N;
+
+        /* Build the table of cumulative cross-section values. */
+        double N0, N1, Z0, Z1;
+        if (projectile > 0) {
+                Z0 = Z;
+                Z1 = 0.;
+                N0 = A - Z;
+                N1 = 0.;
+        } else {
+                Z0 = 0.;
+                Z1 = Z;
+                N0 = 0.;
+                N1 = A - Z;
+        }
+        cs[0] = N0 * (cs0[0] * (1. - h) + cs1[0] * h);
+        cs[1] = cs[0] + N0 * (cs0[1] * (1. - h) + cs1[1] * h);
+        cs[2] = cs[1] + N1 * (cs0[2] * (1. - h) + cs1[2] * h);
+        cs[3] = cs[2] + N1 * (cs0[3] * (1. - h) + cs1[3] * h);
+        cs[4] = cs[3] + Z0 * (cs0[4] * (1. - h) + cs1[4] * h);
+        cs[5] = cs[4] + Z0 * (cs0[5] * (1. - h) + cs1[5] * h);
+        cs[6] = cs[5] + Z1 * (cs0[6] * (1. - h) + cs1[6] * h);
+        cs[7] = cs[6] + Z1 * (cs0[7] * (1. - h) + cs1[7] * h);
+        cs[8] = cs[7] + Z * (cs0[8] * (1. - h) + cs1[8] * h);
+        cs[9] = cs[8] + Z * (cs0[9] * (1. - h) + cs1[9] * h);
+        cs[10] = cs[9] + Z * (cs0[10] * (1. - h) + cs1[10] * h);
+        cs[11] = cs[10] + Z * (cs0[11] * (1. - h) + cs1[11] * h);
+        cs[12] = cs[11] + Z * (cs0[12] * (1. - h) + cs1[12] * h);
+        cs[13] = cs[12] + Z * (cs0[13] * (1. - h) + cs1[13] * h);
+        if (projectile == ENT_PROJECTILE_NU_MU)
+                cs[14] = cs[13] + Z * (cs0[14] * (1. - h) + cs1[14] * h);
+        else
+                cs[14] = cs[13];
+        if (projectile == ENT_PROJECTILE_NU_TAU)
+                cs[15] = cs[14] + Z * (cs0[15] * (1. - h) + cs1[15] * h);
+        else
+                cs[15] = cs[14];
+        if (projectile == ENT_PROJECTILE_NU_E_BAR) {
+                cs[16] = cs[15] + Z * (cs0[16] * (1. - h) + cs1[16] * h);
+                cs[17] = cs[16] + Z * (cs0[17] * (1. - h) + cs1[17] * h);
+                cs[18] = cs[17] + Z * (cs0[18] * (1. - h) + cs1[18] * h);
+        } else {
+                cs[16] = cs[15];
+                cs[17] = cs[15];
+                cs[18] = cs[15];
+        }
+
+        /* Check the result and return. */
+        if (cs[PROGET_N - 1] <= 0.) return ENT_RETURN_DOMAIN_ERROR;
+        return ENT_RETURN_SUCCESS;
+}
+
+/* API interface for the neutrino tranport. */
+enum ent_return ent_transport(struct ent_physics * physics,
+    struct ent_context * context, struct ent_state * state,
+    enum ent_event * event)
+{
+        ENT_ACKNOWLEDGE(ent_transport);
+
+        /* Check and format the inputs. */
+        if ((physics == NULL) || (context == NULL) ||
+            (context->medium == NULL) || (context->random == NULL) ||
+            (state == NULL))
+                ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
+
+        /* Check for an initial limit violation. */
+        enum ent_return rc = ENT_RETURN_SUCCESS;
+        enum ent_event event_ = ENT_EVENT_NONE;
+        if (context->energy_limit > 0.) {
+                if (context->forward &&
+                    (state->energy <= context->energy_limit)) {
+                        event_ = ENT_EVENT_LIMIT_ENERGY;
+                        goto exit;
+                } else if (!context->forward &&
+                    (state->energy >= context->energy_limit)) {
+                        event_ = ENT_EVENT_LIMIT_ENERGY;
+                        goto exit;
+                }
+        }
+        if ((context->distance_max > 0.) &&
+            (state->distance >= context->distance_max)) {
+                event_ = ENT_EVENT_LIMIT_DISTANCE;
+                goto exit;
+        }
+        if ((context->grammage_max > 0.) &&
+            (state->grammage >= context->grammage_max)) {
+                event_ = ENT_EVENT_LIMIT_GRAMMAGE;
+                goto exit;
+        }
+
+        /* Initialise the transport. */
+        double step = 0., density;
+        struct ent_medium * medium = NULL;
+        if ((rc = transport_step(context, state, &medium, &step, &density,
+                 context->grammage_max, &event_)) != ENT_RETURN_SUCCESS)
+                goto exit;
+        if (event_ != ENT_EVENT_NONE) goto exit;
+
+        /* Main transport loop. */
+        for (;;) {
+                /* Compute the cross-sections. */
+                double cs[PROGET_N];
+                if ((rc = transport_cross_section(physics, state->type,
+                         state->energy, medium->Z, medium->A, cs)) !=
+                    ENT_RETURN_SUCCESS)
+                        goto exit;
+
+                /* Randomise the depth of the next interaction. */
+                enum ent_event foreseen = ENT_EVENT_NONE;
+                const double Xint =
+                    medium->A * 1E-03 / (cs[PROGET_N - 1] * ENT_PHYS_NA);
+                double Xlim =
+                    state->grammage - Xint * log(context->random(context));
+                if (context->grammage_max && (context->grammage_max < Xlim)) {
+                        Xlim = context->grammage_max;
+                        foreseen = ENT_EVENT_LIMIT_GRAMMAGE;
+                }
+
+                if (step)
+                        for (;;) {
+                                /* Step until an event occurs. */
+                                if ((rc = transport_step(context, state,
+                                         &medium, &step, &density, Xlim,
+                                         &event_)) != ENT_RETURN_SUCCESS)
+                                        goto exit;
+                                if (event_ != ENT_EVENT_NONE) break;
+                        }
+                else {
+                        /* This is a uniform medium of infinite extension.
+                         * Let's do a single straight step.
+                         */
+                        event_ =
+                            transport_straight(context, state, density, Xlim);
+                }
+
+                /* Process any event. */
+                if ((event_ == ENT_EVENT_LIMIT_GRAMMAGE) &&
+                    (foreseen == ENT_EVENT_NONE)) {
+                        /* An interaction occured. Let's randomise it. */
+                        event_ = ENT_EVENT_NONE;
+                } else
+                        goto exit;
+        }
+
+exit:
+        if (event != NULL) *event = event_;
+        ENT_RETURN(rc);
 }
 
 #if (GDB_MODE)

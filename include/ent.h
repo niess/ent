@@ -147,6 +147,121 @@ typedef void ent_handler_cb(enum ent_return code, ent_function_t caller);
  */
 struct ent_physics;
 
+struct ent_medium;
+struct ent_state;
+/**
+ * Density callback for a material medium.
+ *
+ * @param medium      A related `ent_medium` or `NULL`.
+ * @param state       The state for which the _density_ is requested.
+ * @param density     The corresponding density value in g/cm^3.
+ * @return A proposed step limit distance, in m.
+ *
+ * The callback must return a proposed Monte-Carlo stepping distance, in m,
+ * consistent with the size of the propagation medium density inhomogeneities,
+ * e. g. 1 % of &rho; / |&nabla; &rho;|. Note that returning zero or less
+ * signs that the corresponding medium is uniform.
+ *
+ * **Warning** : it is an error to return zero or less for any position of the
+ * medium if at least one area is not uniform.
+ */
+typedef double ent_density_cb(
+    struct ent_medium * medium, struct ent_state * state, double * density);
+
+/**
+ * Data for describing a propagation medium.
+ *
+ * These are the data required by _ENT_ for describing a propagation medium.
+ * The user might implement his own data structure on top of it.
+ */
+struct ent_medium {
+        /** The medium's material charge number. */
+        double Z;
+        /** The medium's material mass number. */
+        double A;
+        /** The medium density callback. */
+        ent_density_cb * density;
+};
+
+/**
+ * Medium callback for a Monte-Carlo state.
+ *
+ * @param state     The Monte-Carlo state for which the medium is requested.
+ * @param medium    A pointer to the corresponding medium or `NULL` if the state
+ * has exit the simulation area.
+ * @return The proposed step size or `0` for an infinite medium.
+ *
+ * The callback must propose a Monte-Carlo stepping distance, in m,
+ * consistent with the geometry. Note that returning zero or less
+ * signs that the corresponding medium has no boundaries.
+ *
+ * **Warning** : it is an error to return zero or less for any state if the
+ * extension is finite.
+ */
+typedef double ent_medium_cb(
+    struct ent_state * state, struct ent_medium ** medium);
+
+struct ent_context;
+/**
+ * Callback providing a stream of pseudo random numbers.
+ *
+ * @param context The Monte-Carlo context requiring a random number.
+ * @return A uniform pseudo random number in [0;1].
+ *
+ * **Note** : this is the only random stream used by ENT. The user must unsure
+ * proper behaviour, i.e. that a flat distribution in [0;1] is indeed returned.
+ *
+ * **Warning** : if multiple contexts are used the user must ensure that this
+ * callback is thread safe, e.g. by using independant streams for each context
+ * or a locking mechanism in order to share a single random stream.
+ */
+typedef double(ent_random_cb)(struct ent_context * context);
+
+/**
+ * Data for a Monte-Carlo context.
+ *
+ * These are the data required by _ENT_ for describing a Monte-Carlo context.
+ * The user might implement his own data structure on top of it.
+ */
+struct ent_context {
+        /** The medium callback. */
+        ent_medium_cb * medium;
+        /** The random engine callback. */
+        ent_random_cb * random;
+        /** A flag to switch between forward and backward Monte-Carlo. */
+        int forward;
+        /** A user supplied energy limit for the transport, or `0`. */
+        double energy_limit;
+        /** A user supplied distance limit for the transport, or `0`. */
+        double distance_max;
+        /** A user supplied grammage limit for the transport, or `0`. */
+        double grammage_max;
+};
+
+/**
+ * Data for a neutrino Monte-Carlo state.
+ *
+ * These are the data set required by _ENT_ for describing a neutrino
+ * Monte-Carlo state. The user might implement his own data structure on top
+ * of it.
+ */
+struct ent_state {
+        /** The neutrino type. */
+        enum ent_projectile type;
+        /** The neutrino energy, in GeV. */
+        double energy;
+        /** The total distance travelled by the neutrino, in m. */
+        double distance;
+        /** The total grammage travelled by the neutrino, in kg/m^2. */
+        double grammage;
+        /** The Monte-Carlo weight. */
+        double weight;
+        /** The neutrino absolute position, in m. */
+        double position[3];
+        /** The neutrino momentum's direction. */
+        double direction[3];
+};
+
 /**
  * Create a new Physics environment.
  *
@@ -205,6 +320,39 @@ void ent_physics_destroy(struct ent_physics ** physics);
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_projectile projectile, double energy, double Z, double A,
     enum ent_process process, double x, double y, double * dcs);
+
+/**
+* Exit events for a neutrino Monte-Carlo transport.
+*/
+enum ent_event {
+        /** No event, e.g. exit when an error occured. */
+        ENT_EVENT_NONE = 0,
+        /** The neutrino has exit the simulation area. */
+        ENT_EVENT_EXIT,
+        /** The neutrino energy has reached a user suplied limit. */
+        ENT_EVENT_LIMIT_ENERGY,
+        /** The neutrino travelled distance has reached a user suplied limit. */
+        ENT_EVENT_LIMIT_DISTANCE,
+        /** The neutrino travelled grammage has reached a user suplied limit. */
+        ENT_EVENT_LIMIT_GRAMMAGE,
+        /** The neutrino has been converted to another neutrino type. */
+        ENT_EVENT_CONVERSION_NEUTRINO,
+        /** The neutrino has been converted to a muon. */
+        ENT_EVENT_CONVERSION_MUON,
+        /** The neutrino has been converted to a tau. */
+        ENT_EVENT_CONVERSION_TAU,
+        /** The neutrino has been converted to hadrons. */
+        ENT_EVENT_CONVERSION_HADRONS
+};
+
+/**
+ * Perform a Monte-Carlo neutrino transport.
+ *
+ * TODO: the documentation.
+ */
+enum ent_return ent_transport(struct ent_physics * physics,
+    struct ent_context * context, struct ent_state * state,
+    enum ent_event * event);
 
 /**
 * Compute a PDF.

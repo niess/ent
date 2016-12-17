@@ -9,7 +9,7 @@
 static struct ent_physics * physics = NULL;
 
 /* Error handler: dump any error message and exit to the OS. */
-void handle_error(enum ent_return rc, ent_function_t * caller)
+static void handle_error(enum ent_return rc, ent_function_t * caller)
 {
         /* Dump an error message. */
         ent_error_print(stderr, rc, caller, "\t", "\n");
