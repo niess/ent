@@ -33,7 +33,7 @@ int main()
         const double x = 1E-02;
         const double y = 1E-02;
         double dcs;
-        ent_physics_dcs(physics, ENT_PROJECTILE_NU_TAU, energy, 0.5, 1.,
+        ent_physics_dcs(physics, ENT_PID_NU_TAU, energy, 0.5, 1.,
             ENT_PROCESS_DIS_CC, x, y, &dcs);
         printf("DCS(%.5lE, %.5lE, %.5lE) = %.5lE\n", energy, x, y, dcs);
 

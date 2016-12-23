@@ -54,10 +54,11 @@ int main()
         struct ent_context context = { &medium, &random, 1, 0., 6400E+03, 0. };
 
         /* Run a Monte-Carlo transport. */
-        struct ent_state state = { ENT_PROJECTILE_NU_TAU, 1E+09, 0., 0., 1.,
+        struct ent_state neutrino = { ENT_PID_NU_TAU, 1E+09, 0., 0., 1.,
                 { 0., 0., 0. }, { 0., 0., 1. } };
+        struct ent_state product;
         enum ent_event event;
-        ent_transport(physics, &context, &state, &event);
+        ent_transport(physics, &context, &neutrino, &product, &event);
 
         /* Finalise and exit to the OS. */
         ent_physics_destroy(&physics);

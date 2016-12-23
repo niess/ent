@@ -50,23 +50,37 @@ enum ent_return {
 };
 
 /**
- *  Projectiles, i.e. neutrinos flavours.
+ *  Particles ID's, following the PDG numbering scheme.
  */
-enum ent_projectile {
+enum ent_pid {
         /** The tau anti-neutrino. */
-        ENT_PROJECTILE_NU_TAU_BAR = -3,
+        ENT_PID_NU_BAR_TAU = -16,
+        /** The anti-tau. */
+        ENT_PID_TAU_BAR = -15,
         /** The muon anti-neutrino. */
-        ENT_PROJECTILE_NU_MU_BAR = -2,
+        ENT_PID_NU_BAR_MU = -14,
+        /** The anti-muon. */
+        ENT_PID_MUON_BAR = -13,
         /** The electron anti-neutrino. */
-        ENT_PROJECTILE_NU_E_BAR = -1,
+        ENT_PID_NU_BAR_E = -12,
+        /** The positron. */
+        ENT_PID_POSITRON = -11,
+        /** Tag for none product. */
+        ENT_PID_NONE = 0,
+        /** The electron. */
+        ENT_PID_ELECTRON = 11,
         /** The electron neutrino. */
-        ENT_PROJECTILE_NU_E = 1,
+        ENT_PID_NU_E = 12,
+        /** The muon. */
+        ENT_PID_MUON = 13,
         /** The muon neutrino. */
-        ENT_PROJECTILE_NU_MU = 2,
+        ENT_PID_NU_MU = 14,
+        /** The tau. */
+        ENT_PID_TAU = 15,
         /** The tau neutrino. */
-        ENT_PROJECTILE_NU_TAU = 3,
-        /* The number of projectiles. */
-        ENT_N_PROJECTILES = 6
+        ENT_PID_NU_TAU = 16,
+        /* A generic hadronic product. */
+        ENT_PID_HADRON = 100
 };
 
 /**
@@ -239,26 +253,26 @@ struct ent_context {
 };
 
 /**
- * Data for a neutrino Monte-Carlo state.
+ * Data for a particle Monte-Carlo state.
  *
- * These are the data set required by _ENT_ for describing a neutrino
+ * These are the data set required by _ENT_ for describing a particle
  * Monte-Carlo state. The user might implement his own data structure on top
  * of it.
  */
 struct ent_state {
-        /** The neutrino type. */
-        enum ent_projectile type;
-        /** The neutrino energy, in GeV. */
+        /** The particle type. */
+        enum ent_pid pid;
+        /** The particle energy, in GeV. */
         double energy;
-        /** The total distance travelled by the neutrino, in m. */
+        /** The total distance travelled by the particle, in m. */
         double distance;
-        /** The total grammage travelled by the neutrino, in kg/m^2. */
+        /** The total grammage travelled by the particle, in kg/m^2. */
         double grammage;
         /** The Monte-Carlo weight. */
         double weight;
-        /** The neutrino absolute position, in m. */
+        /** The particle absolute position, in m. */
         double position[3];
-        /** The neutrino momentum's direction. */
+        /** The particle momentum's direction. */
         double direction[3];
 };
 
@@ -318,7 +332,7 @@ void ent_physics_destroy(struct ent_physics ** physics);
  *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is invalid.
  */
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
-    enum ent_projectile projectile, double energy, double Z, double A,
+    enum ent_pid projectile, double energy, double Z, double A,
     enum ent_process process, double x, double y, double * dcs);
 
 /**
@@ -329,20 +343,14 @@ enum ent_event {
         ENT_EVENT_NONE = 0,
         /** The neutrino has exit the simulation area. */
         ENT_EVENT_EXIT,
-        /** The neutrino energy has reached a user suplied limit. */
+        /** The neutrino energy has reached a user limit. */
         ENT_EVENT_LIMIT_ENERGY,
-        /** The neutrino travelled distance has reached a user suplied limit. */
+        /** The neutrino travelled distance has reached a user limit. */
         ENT_EVENT_LIMIT_DISTANCE,
-        /** The neutrino travelled grammage has reached a user suplied limit. */
+        /** The neutrino travelled grammage has reached a user limit. */
         ENT_EVENT_LIMIT_GRAMMAGE,
-        /** The neutrino has been converted to another neutrino type. */
-        ENT_EVENT_CONVERSION_NEUTRINO,
-        /** The neutrino has been converted to a muon. */
-        ENT_EVENT_CONVERSION_MUON,
-        /** The neutrino has been converted to a tau. */
-        ENT_EVENT_CONVERSION_TAU,
-        /** The neutrino has been converted to hadrons. */
-        ENT_EVENT_CONVERSION_HADRONS
+        /** The neutrino has been converted. */
+        ENT_EVENT_CONVERSION,
 };
 
 /**
@@ -351,8 +359,8 @@ enum ent_event {
  * TODO: the documentation.
  */
 enum ent_return ent_transport(struct ent_physics * physics,
-    struct ent_context * context, struct ent_state * state,
-    enum ent_event * event);
+    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_state * product, enum ent_event * event);
 
 /**
 * Compute a PDF.

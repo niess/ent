@@ -84,23 +84,19 @@ enum proget_index {
         /* Elastic scattering of a nu_e on a an electron. */
         PROGET_ELASTIC_NU_E,
         /* Elastic scattering of an anti nu_e on a an electron. */
-        PROGET_ELASTIC_NU_E_BAR,
-        /* Elastic scattering of a nu_mu on a an electron. */
-        PROGET_ELASTIC_NU_MU,
-        /* Elastic scattering of an anti nu_mu on a an electron. */
-        PROGET_ELASTIC_NU_MU_BAR,
-        /* Elastic scattering of a nu_tau on a an electron. */
-        PROGET_ELASTIC_NU_TAU,
-        /* Elastic scattering of an anti nu_tau on a an electron. */
-        PROGET_ELASTIC_NU_TAU_BAR,
+        PROGET_ELASTIC_NU_BAR_E,
+        /* Elastic scattering of a nu_X={mu, tau} on a an electron. */
+        PROGET_ELASTIC_NU_X,
+        /* Elastic scattering of an anti nu_X={mu, tau} on a an electron. */
+        PROGET_ELASTIC_NU_BAR_X,
         /* Inverse muon decay with a nu_mu projectile. */
         PROGET_INVERSE_NU_MU_MU,
         /* Inverse tau decay with a nu_tau projectile. */
         PROGET_INVERSE_NU_TAU_TAU,
         /* Inverse muon decay with an anti nu_e projectile. */
-        PROGET_INVERSE_NU_E_BAR_MU,
+        PROGET_INVERSE_NU_BAR_E_MU,
         /* Inverse tau decay with an anti nu_e projectile. */
-        PROGET_INVERSE_NU_E_BAR_TAU,
+        PROGET_INVERSE_NU_BAR_E_TAU,
         /* Anti nu_e projectile on an electron with hadrons production. */
         PROGET_GLASHOW_HADRONS,
         /* Number of PROcess-projectile-tarGET cases. */
@@ -134,7 +130,7 @@ static int memory_padded_size(int size, int pad_size)
 static void * physics_create(int extra_size)
 {
         void * v = malloc(sizeof(struct ent_physics) + extra_size +
-            PROGET_N * ENERGY_N * sizeof(double));
+            (PROGET_N - 1) * ENERGY_N * sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
         p->cs = (double *)(p->data + extra_size);
@@ -571,9 +567,9 @@ static void lha_pdf_compute(
 }
 
 /* DCS for Deep Inelastic Scattering (DIS) on nucleons. */
-static double dcs_dis(struct ent_physics * physics,
-    enum ent_projectile projectile, double energy, double Z, double A,
-    enum ent_process process, double x, double y)
+static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
+    double energy, double Z, double A, enum ent_process process, double x,
+    double y)
 {
         /* Get the PDFs. */
         const double Q2 = 2. * x * y * ENT_MASS_NUCLEON * energy;
@@ -646,7 +642,7 @@ static double dcs_dis(struct ent_physics * physics,
 
 /* DCS for elastic scattering on electrons. */
 static double dcs_elastic(
-    enum ent_projectile projectile, double energy, double Z, double y)
+    enum ent_pid projectile, double energy, double Z, double y)
 {
         const double R = 2. * ENT_PHYS_SIN_THETA_W_2;
         const double L = 2. * ENT_PHYS_SIN_THETA_W_2 - 1.;
@@ -654,7 +650,7 @@ static double dcs_elastic(
         const double rZ = MZ2 / (MZ2 + 2. * ENT_MASS_ELECTRON * energy * y);
 
         double factor;
-        if (projectile == ENT_PROJECTILE_NU_E_BAR) {
+        if (projectile == ENT_PID_NU_BAR_E) {
                 const double tmp1 = R * rZ;
                 const double a =
                     ENT_MASS_W * ENT_MASS_W - 2. * ENT_MASS_ELECTRON * energy;
@@ -663,7 +659,7 @@ static double dcs_elastic(
                 const double d = rZ + c * a;
                 const double e = -c * b;
                 factor = tmp1 * tmp1 + (d * d + e * e) * (1. - y) * (1. - y);
-        } else if (projectile == ENT_PROJECTILE_NU_E) {
+        } else if (projectile == ENT_PID_NU_E) {
                 const double tmp1 = R * (1. - y) * rZ;
                 const double MW2 = ENT_MASS_W * ENT_MASS_W;
                 const double rW =
@@ -682,13 +678,13 @@ static double dcs_elastic(
 }
 
 /* DCS for inelastic scattering on electrons. */
-static double dcs_inverse(enum ent_projectile projectile, double energy,
-    double Z, enum ent_process process, double y)
+static double dcs_inverse(enum ent_pid projectile, double energy, double Z,
+    enum ent_process process, double y)
 {
-        if ((projectile != ENT_PROJECTILE_NU_E_BAR) &&
-            ((projectile != ENT_PROJECTILE_NU_MU) ||
+        if ((projectile != ENT_PID_NU_BAR_E) &&
+            ((projectile != ENT_PID_NU_MU) ||
                 (process != ENT_PROCESS_INVERSE_MUON)) &&
-            ((projectile != ENT_PROJECTILE_NU_TAU) ||
+            ((projectile != ENT_PID_NU_TAU) ||
                 (process != ENT_PROCESS_INVERSE_TAU)))
                 return 0.;
 
@@ -698,7 +694,7 @@ static double dcs_inverse(enum ent_projectile projectile, double energy,
         const double MW2 = ENT_MASS_W * ENT_MASS_W;
 
         double factor;
-        if (projectile == ENT_PROJECTILE_NU_E_BAR) {
+        if (projectile == ENT_PID_NU_BAR_E) {
                 const double a = 1. - 2. * ENT_MASS_ELECTRON * energy / MW2;
                 const double b2 = ENT_WIDTH_W * ENT_WIDTH_W / MW2;
                 factor = (1. - y) * (1. - y) / (a * a + b2);
@@ -717,16 +713,16 @@ static double dcs_inverse(enum ent_projectile projectile, double energy,
 
 /* DCS for hadron(s) production by Glashow's resonance. */
 static double dcs_glashow(
-    enum ent_projectile projectile, double energy, double Z, double y)
+    enum ent_pid projectile, double energy, double Z, double y)
 {
-        if (projectile != ENT_PROJECTILE_NU_E_BAR) return 0.;
+        if (projectile != ENT_PID_NU_BAR_E) return 0.;
 
         return (ENT_WIDTH_W / ENT_WIDTH_W_TO_MUON - 2.) *
             dcs_inverse(projectile, energy, ENT_PROCESS_INVERSE_MUON, Z, y);
 }
 
 /* Compute the DCS for a given process, projectile and target. */
-double dcs_compute(struct ent_physics * physics, enum ent_projectile projectile,
+double dcs_compute(struct ent_physics * physics, enum ent_pid projectile,
     double energy, double Z, double A, enum ent_process process, double x,
     double y)
 {
@@ -747,7 +743,7 @@ double dcs_compute(struct ent_physics * physics, enum ent_projectile projectile,
  * quadrature.
  */
 static double dcs_integrate(struct ent_physics * physics,
-    enum ent_projectile projectile, double energy, double Z, double A,
+    enum ent_pid projectile, double energy, double Z, double A,
     enum ent_process process)
 {
 /*
@@ -812,32 +808,28 @@ static double dcs_integrate(struct ent_physics * physics,
 /* Tabulate the interactions lengths and processes weights. */
 static void physics_tabulate(struct ent_physics * physics)
 {
-        const enum ent_process process[PROGET_N] = { ENT_PROCESS_DIS_CC,
+        const enum ent_process process[PROGET_N - 1] = { ENT_PROCESS_DIS_CC,
                 ENT_PROCESS_DIS_NC, ENT_PROCESS_DIS_CC, ENT_PROCESS_DIS_NC,
                 ENT_PROCESS_DIS_CC, ENT_PROCESS_DIS_NC, ENT_PROCESS_DIS_CC,
                 ENT_PROCESS_DIS_NC, ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC,
-                ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC,
-                ENT_PROCESS_ELASTIC, ENT_PROCESS_INVERSE_MUON,
-                ENT_PROCESS_INVERSE_TAU, ENT_PROCESS_INVERSE_MUON,
-                ENT_PROCESS_INVERSE_TAU, ENT_PROCESS_GLASHOW_HADRON };
-        const enum ent_projectile projectile[PROGET_N] = { ENT_PROJECTILE_NU_E,
-                ENT_PROJECTILE_NU_E, ENT_PROJECTILE_NU_E_BAR,
-                ENT_PROJECTILE_NU_E_BAR, ENT_PROJECTILE_NU_E,
-                ENT_PROJECTILE_NU_E, ENT_PROJECTILE_NU_E_BAR,
-                ENT_PROJECTILE_NU_E_BAR, ENT_PROJECTILE_NU_E,
-                ENT_PROJECTILE_NU_E_BAR, ENT_PROJECTILE_NU_MU,
-                ENT_PROJECTILE_NU_MU_BAR, ENT_PROJECTILE_NU_TAU,
-                ENT_PROJECTILE_NU_TAU_BAR, ENT_PROJECTILE_NU_MU,
-                ENT_PROJECTILE_NU_TAU, ENT_PROJECTILE_NU_E_BAR,
-                ENT_PROJECTILE_NU_E_BAR, ENT_PROJECTILE_NU_E_BAR };
+                ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC,
+                ENT_PROCESS_INVERSE_MUON, ENT_PROCESS_INVERSE_TAU,
+                ENT_PROCESS_INVERSE_MUON, ENT_PROCESS_INVERSE_TAU };
+        const enum ent_pid projectile[PROGET_N - 1] = { ENT_PID_NU_E,
+                ENT_PID_NU_E, ENT_PID_NU_BAR_E, ENT_PID_NU_BAR_E, ENT_PID_NU_E,
+                ENT_PID_NU_E, ENT_PID_NU_BAR_E, ENT_PID_NU_BAR_E, ENT_PID_NU_E,
+                ENT_PID_NU_BAR_E, ENT_PID_NU_MU, ENT_PID_NU_BAR_MU,
+                ENT_PID_NU_MU, ENT_PID_NU_TAU, ENT_PID_NU_BAR_E,
+                ENT_PID_NU_BAR_E };
 
         const double dlE = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
         double * table;
         int i;
-        for (i = 0, table = physics->cs; i < ENERGY_N; i++, table += PROGET_N) {
+        for (i = 0, table = physics->cs; i < ENERGY_N;
+             i++, table += PROGET_N - 1) {
                 const double energy = ENERGY_MIN * exp(i * dlE);
                 int j;
-                for (j = 0; j < PROGET_N; j++) {
+                for (j = 0; j < PROGET_N - 1; j++) {
                         const double Z =
                             (j <= PROGET_NC_NU_BAR_NEUTRON) ? 0. : 1.;
                         table[j] = dcs_integrate(
@@ -882,7 +874,7 @@ void ent_physics_destroy(struct ent_physics ** physics)
 
 /* Generic API function for computing DCSs. */
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
-    enum ent_projectile projectile, double energy, double Z, double A,
+    enum ent_pid projectile, double energy, double Z, double A,
     enum ent_process process, double x, double y, double * dcs)
 {
         ENT_ACKNOWLEDGE(ent_physics_dcs);
@@ -1078,10 +1070,256 @@ static enum ent_event transport_straight(struct ent_context * context,
         return event;
 }
 
-/* Compute the tranport cross-sections for a given projectile and medium. */
+/* Sample the inelasticity, _y_, for an interaction with an electron. The
+ * sampling is done with a combination of inverse and rejection sampling.
+ */
+static enum ent_event transport_sample_y(struct ent_context * context,
+    struct ent_state * state, int proget, double * y_, enum ent_pid * ejectile,
+    enum ent_pid * recoil, double * mu)
+{
+        const double yZ =
+            0.5 * ENT_MASS_Z * ENT_MASS_Z / (ENT_MASS_ELECTRON * state->energy);
+        const double yW =
+            0.5 * ENT_MASS_W * ENT_MASS_W / (ENT_MASS_ELECTRON * state->energy);
+        const double Re2 = 4. * ENT_PHYS_SIN_THETA_W_2 * ENT_PHYS_SIN_THETA_W_2;
+        const double Le = 2. * ENT_PHYS_SIN_THETA_W_2 - 1.;
+        const double Le2 = Le * Le;
+
+        enum ent_event event = ENT_EVENT_NONE;
+        *mu = ENT_MASS_ELECTRON;
+        *recoil = ENT_PID_ELECTRON;
+        double y;
+        if (proget == PROGET_ELASTIC_NU_E) {
+                const double Cz = yZ / (1. + yZ);
+                const double Cw = yW / (1. + yW);
+                const double r1 = Cz * Re2;
+                const double r2 = r1 + Cz * Le2;
+                const double r3 = r2 + 4. * Cw;
+                for (;;) {
+                        const double r = context->random(context) * r3;
+                        const double u = context->random(context);
+                        const double t = context->random(context);
+                        if (r <= r2)
+                                y = yZ * u / (1. - u + yZ);
+                        else
+                                y = (1. + yW) * u / (yW + u);
+                        if (r <= r1) {
+                                if (t > (1. - y) * (1. - y)) continue;
+                        } else {
+                                const double dZ = Le * yZ / (y + yZ);
+                                const double dW = 2. * yW / (1. - y + yW);
+                                if (t * (dZ * dZ + dW * dW) >
+                                    (dZ + dW) * (dZ + dW))
+                                        continue;
+                        }
+                        break;
+                }
+        } else if (proget == PROGET_ELASTIC_NU_BAR_E) {
+                const double rW = ENT_WIDTH_W / ENT_MASS_W;
+                const double di =
+                    1. / ((yW - 1.) * (yW - 1.) + rW * rW * yW * yW);
+                const double a = (yW + yW) * (yW - 1.) * di;
+                const double b = -2. * yW * yW * rW * di;
+                const double Cz = yZ / (1. + yZ);
+                const double r1 = Cz * (Re2 + Le2);
+                const double r2 = r1 + (a * a + b * b) / 3.;
+                for (;;) {
+                        const double r = context->random(context) * r2;
+                        const double u = context->random(context);
+                        const double t = context->random(context);
+                        if (r <= r1)
+                                y = yZ * u / (1. - u + yZ);
+                        else
+                                y = 1. - pow(u, 1. / 3);
+                        const double dZ = yZ / (y + yZ);
+                        const double dy2 = (1. - y) * (1. - y);
+                        const double t0 =
+                            dZ * dZ * (Re2 + Le2) + (a * a + b * b) * dy2;
+                        const double t1 = dZ * dZ * Re2 +
+                            ((Le * dZ + a) * (Le * dZ + a) + b * b) * dy2;
+                        if (t * t0 <= t1) break;
+                }
+
+        } else if (proget <= PROGET_ELASTIC_NU_BAR_X) {
+                const double r1 = (proget == PROGET_ELASTIC_NU_X) ?
+                    Re2 / (Re2 + Le2) :
+                    Le2 / (Re2 + Le2);
+                for (;;) {
+                        const double u = context->random(context);
+                        const double r = context->random(context);
+                        y = yZ * u / (1. - u + yZ);
+                        if (r <= r1) {
+                                if (context->random(context) >
+                                    (1. - y) * (1. - y))
+                                        continue;
+                        }
+                        break;
+                }
+        } else if (proget <= PROGET_INVERSE_NU_TAU_TAU) {
+                const double u = context->random(context);
+                y = (1. + yW) * u / (yW + u);
+                *ejectile = ENT_PID_NU_E;
+                if (proget == PROGET_INVERSE_NU_MU_MU) {
+                        *recoil = ENT_PID_MUON;
+                        *mu = ENT_MASS_MUON;
+                } else {
+                        *recoil = ENT_PID_TAU;
+                        *mu = ENT_MASS_TAU;
+                }
+                event = ENT_EVENT_CONVERSION;
+        } else {
+                const double u = context->random(context);
+                y = 1. - pow(u, 1. / 3.);
+                if (proget == PROGET_INVERSE_NU_BAR_E_MU) {
+                        *ejectile = ENT_PID_NU_BAR_MU;
+                        *recoil = ENT_PID_MUON;
+                        *mu = ENT_MASS_MUON;
+                } else {
+                        *ejectile = ENT_PID_NU_BAR_TAU;
+                        *recoil = ENT_PID_TAU;
+                        *mu = ENT_MASS_TAU;
+                }
+                event = ENT_EVENT_CONVERSION;
+        }
+
+        *y_ = y;
+        return event;
+}
+
+/* Rotate the state direction. */
+static void transport_rotate(
+    struct ent_state * state, double cos_theta, double cos_phi, double sin_phi)
+{
+        /* Unpack the direction. */
+        double * const direction = state->direction;
+
+        /* Check the numerical sine. */
+        const double stsq = 1. - cos_theta * cos_theta;
+        if (stsq <= 0.) return;
+        const double st = sqrt(stsq);
+
+        /* select the co-vectors for the local basis. */
+        double u0x = 0., u0y = 0., u0z = 0.;
+        const double a0 = fabs(direction[0]);
+        const double a1 = fabs(direction[1]);
+        const double a2 = fabs(direction[2]);
+        if (a0 > a1) {
+                if (a0 > a2) {
+                        const double nrm =
+                            1. / sqrt(direction[0] * direction[0] +
+                                     direction[2] * direction[2]);
+                        u0x = -direction[2] * nrm, u0z = direction[0] * nrm;
+                } else {
+                        const double nrm =
+                            1. / sqrt(direction[1] * direction[1] +
+                                     direction[2] * direction[2]);
+                        u0y = direction[2] * nrm, u0z = -direction[1] * nrm;
+                }
+        } else {
+                if (a1 > a2) {
+                        const double nrm =
+                            1. / sqrt(direction[0] * direction[0] +
+                                     direction[1] * direction[1]);
+                        u0x = direction[1] * nrm, u0y = -direction[0] * nrm;
+                } else {
+                        const double nrm =
+                            1. / sqrt(direction[1] * direction[1] +
+                                     direction[2] * direction[2]);
+                        u0y = direction[2] * nrm, u0z = -direction[1] * nrm;
+                }
+        }
+        const double u1x = u0y * direction[2] - u0z * direction[1];
+        const double u1y = u0z * direction[0] - u0x * direction[2];
+        const double u1z = u0x * direction[1] - u0y * direction[0];
+
+        /* Apply the rotation. */
+        direction[0] =
+            cos_theta * direction[0] + st * (cos_phi * u0x + sin_phi * u1x);
+        direction[1] =
+            cos_theta * direction[1] + st * (cos_phi * u0y + sin_phi * u1y);
+        direction[2] =
+            cos_theta * direction[2] + st * (cos_phi * u0z + sin_phi * u1z);
+}
+
+/* Process an interaction vertex. */
+static enum ent_return transport_vertex(struct ent_context * context,
+    struct ent_state * neutrino, struct ent_state * product, double * cs,
+    enum ent_event * event)
+{
+        *event = ENT_EVENT_NONE;
+
+        /* Randomise the interaction process and the target. */
+        const double r = cs[PROGET_N - 1] * context->random(context);
+        if (r < 0.) return ENT_RETURN_DOMAIN_ERROR;
+        int i;
+        for (i = 0; i < PROGET_N; i++)
+                if (r <= cs[i]) break;
+
+        /* Process the corresponding vertex. */
+        enum ent_pid ejectile = neutrino->pid;
+        enum ent_pid recoil = ENT_PID_NONE;
+        if (i <= PROGET_NC_NU_BAR_PROTON) {
+                /* TODO: sample DIS. */
+        } else if (i < PROGET_GLASHOW_HADRONS) {
+                /* This is an interaction with an atomic electron and a
+                 * neutrino in the final states.
+                 */
+                double y, ce, cr;
+                for (;;) {
+                        /* Let's first sample the inelasticity _y_. */
+                        double mu;
+                        *event = transport_sample_y(
+                            context, neutrino, i, &y, &ejectile, &recoil, &mu);
+                        if (y < mu / neutrino->energy) continue;
+
+                        /* Then, compute the cosines of the polar angles. */
+                        const double pe =
+                            neutrino->energy * (1. - y) + ENT_MASS_ELECTRON;
+                        const double peL =
+                            (neutrino->energy + ENT_MASS_ELECTRON) * (1. - y) +
+                            0.5 * (ENT_MASS_ELECTRON * ENT_MASS_ELECTRON +
+                                      mu * mu) /
+                                neutrino->energy;
+                        if (peL > pe) continue;
+                        ce = peL / pe;
+                        const double pr =
+                            sqrt(y * y * neutrino->energy * neutrino->energy -
+                                mu * mu);
+                        const double prL = neutrino->energy - peL;
+                        if (prL > pr) continue;
+                        cr = prL / pr;
+                        break;
+                }
+
+                /* Update the particles states. */
+                const double phi = 2. * M_PI * context->random(context);
+                const double cp = cos(phi);
+                const double sp = sin(phi);
+                if ((product != NULL) && (recoil != ENT_PID_NONE)) {
+                        memcpy(product, neutrino, sizeof(*product));
+                        product->pid = recoil;
+                        product->energy = y * neutrino->energy;
+                        transport_rotate(product, cr, -cp, -sp);
+                }
+                neutrino->pid = ejectile;
+                neutrino->energy = neutrino->energy * (1. - y);
+                transport_rotate(neutrino, ce, cp, sp);
+        } else if (i == PROGET_GLASHOW_HADRONS) {
+                /* This is a total conversion of a anti nu_e neutrino on an
+                 * atomic electron. */
+                neutrino->pid = ENT_PID_HADRON;
+                *event = ENT_EVENT_CONVERSION;
+        } else {
+                return ENT_RETURN_DOMAIN_ERROR;
+        }
+
+        return ENT_RETURN_SUCCESS;
+}
+
+/* Compute the tranport cross-sections for a given projectile and
+ * medium. */
 static enum ent_return transport_cross_section(struct ent_physics * physics,
-    enum ent_projectile projectile, double energy, double Z, double A,
-    double * cs)
+    enum ent_pid projectile, double energy, double Z, double A, double * cs)
 {
         /* Build the interpolation factors. */
         int i0, i1;
@@ -1124,28 +1362,40 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         cs[5] = cs[4] + Z0 * (cs0[5] * (1. - h) + cs1[5] * h);
         cs[6] = cs[5] + Z1 * (cs0[6] * (1. - h) + cs1[6] * h);
         cs[7] = cs[6] + Z1 * (cs0[7] * (1. - h) + cs1[7] * h);
-        cs[8] = cs[7] + Z * (cs0[8] * (1. - h) + cs1[8] * h);
-        cs[9] = cs[8] + Z * (cs0[9] * (1. - h) + cs1[9] * h);
-        cs[10] = cs[9] + Z * (cs0[10] * (1. - h) + cs1[10] * h);
-        cs[11] = cs[10] + Z * (cs0[11] * (1. - h) + cs1[11] * h);
-        cs[12] = cs[11] + Z * (cs0[12] * (1. - h) + cs1[12] * h);
-        cs[13] = cs[12] + Z * (cs0[13] * (1. - h) + cs1[13] * h);
-        if (projectile == ENT_PROJECTILE_NU_MU)
-                cs[14] = cs[13] + Z * (cs0[14] * (1. - h) + cs1[14] * h);
+        if (projectile == ENT_PID_NU_E)
+                cs[8] = cs[7] + Z * (cs0[8] * (1. - h) + cs1[8] * h);
         else
-                cs[14] = cs[13];
-        if (projectile == ENT_PROJECTILE_NU_TAU)
+                cs[8] = cs[7];
+        if (projectile == ENT_PID_NU_BAR_E)
+                cs[9] = cs[8] + Z * (cs0[9] * (1. - h) + cs1[9] * h);
+        else
+                cs[9] = cs[8];
+        if ((projectile == ENT_PID_NU_MU) || (projectile == ENT_PID_NU_TAU))
+                cs[10] = cs[9] + Z * (cs0[10] * (1. - h) + cs1[10] * h);
+        else
+                cs[10] = cs[9];
+        if ((projectile == ENT_PID_NU_BAR_MU) ||
+            (projectile == ENT_PID_NU_BAR_TAU))
+                cs[11] = cs[10] + Z * (cs0[11] * (1. - h) + cs1[11] * h);
+        else
+                cs[11] = cs[10];
+        if (projectile == ENT_PID_NU_MU)
+                cs[12] = cs[11] + Z * (cs0[12] * (1. - h) + cs1[12] * h);
+        else
+                cs[12] = cs[11];
+        if (projectile == ENT_PID_NU_TAU)
+                cs[13] = cs[12] + Z * (cs0[13] * (1. - h) + cs1[13] * h);
+        else
+                cs[13] = cs[12];
+        if (projectile == ENT_PID_NU_BAR_E) {
+                const double d = Z * (cs0[14] * (1. - h) + cs1[14] * h);
+                cs[14] = cs[13] + d;
                 cs[15] = cs[14] + Z * (cs0[15] * (1. - h) + cs1[15] * h);
-        else
-                cs[15] = cs[14];
-        if (projectile == ENT_PROJECTILE_NU_E_BAR) {
-                cs[16] = cs[15] + Z * (cs0[16] * (1. - h) + cs1[16] * h);
-                cs[17] = cs[16] + Z * (cs0[17] * (1. - h) + cs1[17] * h);
-                cs[18] = cs[17] + Z * (cs0[18] * (1. - h) + cs1[18] * h);
+                cs[16] = cs[15] + d * (ENT_WIDTH_W / ENT_WIDTH_W_TO_MUON - 1.);
         } else {
-                cs[16] = cs[15];
-                cs[17] = cs[15];
-                cs[18] = cs[15];
+                cs[14] = cs[13];
+                cs[15] = cs[13];
+                cs[16] = cs[13];
         }
 
         /* Check the result and return. */
@@ -1155,15 +1405,17 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
 
 /* API interface for the neutrino tranport. */
 enum ent_return ent_transport(struct ent_physics * physics,
-    struct ent_context * context, struct ent_state * state,
-    enum ent_event * event)
+    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_state * product, enum ent_event * event)
 {
         ENT_ACKNOWLEDGE(ent_transport);
+        if (product != NULL) product->pid = ENT_PID_NONE;
+        *event = ENT_EVENT_NONE;
 
         /* Check and format the inputs. */
         if ((physics == NULL) || (context == NULL) ||
             (context->medium == NULL) || (context->random == NULL) ||
-            (state == NULL))
+            (neutrino == NULL))
                 ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
 
         /* Check for an initial limit violation. */
@@ -1171,22 +1423,22 @@ enum ent_return ent_transport(struct ent_physics * physics,
         enum ent_event event_ = ENT_EVENT_NONE;
         if (context->energy_limit > 0.) {
                 if (context->forward &&
-                    (state->energy <= context->energy_limit)) {
+                    (neutrino->energy <= context->energy_limit)) {
                         event_ = ENT_EVENT_LIMIT_ENERGY;
                         goto exit;
                 } else if (!context->forward &&
-                    (state->energy >= context->energy_limit)) {
+                    (neutrino->energy >= context->energy_limit)) {
                         event_ = ENT_EVENT_LIMIT_ENERGY;
                         goto exit;
                 }
         }
         if ((context->distance_max > 0.) &&
-            (state->distance >= context->distance_max)) {
+            (neutrino->distance >= context->distance_max)) {
                 event_ = ENT_EVENT_LIMIT_DISTANCE;
                 goto exit;
         }
         if ((context->grammage_max > 0.) &&
-            (state->grammage >= context->grammage_max)) {
+            (neutrino->grammage >= context->grammage_max)) {
                 event_ = ENT_EVENT_LIMIT_GRAMMAGE;
                 goto exit;
         }
@@ -1194,7 +1446,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
         /* Initialise the transport. */
         double step = 0., density;
         struct ent_medium * medium = NULL;
-        if ((rc = transport_step(context, state, &medium, &step, &density,
+        if ((rc = transport_step(context, neutrino, &medium, &step, &density,
                  context->grammage_max, &event_)) != ENT_RETURN_SUCCESS)
                 goto exit;
         if (event_ != ENT_EVENT_NONE) goto exit;
@@ -1203,8 +1455,8 @@ enum ent_return ent_transport(struct ent_physics * physics,
         for (;;) {
                 /* Compute the cross-sections. */
                 double cs[PROGET_N];
-                if ((rc = transport_cross_section(physics, state->type,
-                         state->energy, medium->Z, medium->A, cs)) !=
+                if ((rc = transport_cross_section(physics, neutrino->pid,
+                         neutrino->energy, medium->Z, medium->A, cs)) !=
                     ENT_RETURN_SUCCESS)
                         goto exit;
 
@@ -1213,7 +1465,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                 const double Xint =
                     medium->A * 1E-03 / (cs[PROGET_N - 1] * ENT_PHYS_NA);
                 double Xlim =
-                    state->grammage - Xint * log(context->random(context));
+                    neutrino->grammage - Xint * log(context->random(context));
                 if (context->grammage_max && (context->grammage_max < Xlim)) {
                         Xlim = context->grammage_max;
                         foreseen = ENT_EVENT_LIMIT_GRAMMAGE;
@@ -1222,25 +1474,30 @@ enum ent_return ent_transport(struct ent_physics * physics,
                 if (step)
                         for (;;) {
                                 /* Step until an event occurs. */
-                                if ((rc = transport_step(context, state,
+                                if ((rc = transport_step(context, neutrino,
                                          &medium, &step, &density, Xlim,
                                          &event_)) != ENT_RETURN_SUCCESS)
                                         goto exit;
                                 if (event_ != ENT_EVENT_NONE) break;
                         }
                 else {
-                        /* This is a uniform medium of infinite extension.
+                        /* This is a uniform medium of infinite
+                         * extension.
                          * Let's do a single straight step.
                          */
-                        event_ =
-                            transport_straight(context, state, density, Xlim);
+                        event_ = transport_straight(
+                            context, neutrino, density, Xlim);
                 }
 
                 /* Process any event. */
                 if ((event_ == ENT_EVENT_LIMIT_GRAMMAGE) &&
                     (foreseen == ENT_EVENT_NONE)) {
-                        /* An interaction occured. Let's randomise it. */
-                        event_ = ENT_EVENT_NONE;
+                        /* An interaction occured. Let's randomise it.
+                         */
+                        if ((rc = transport_vertex(context, neutrino, product,
+                                 cs, &event_)) != ENT_RETURN_SUCCESS)
+                                goto exit;
+                        if (event_ != ENT_EVENT_NONE) goto exit;
                 } else
                         goto exit;
         }
@@ -1263,7 +1520,8 @@ static int fe_status;
 /* Library initialisation. */
 void __attribute__((constructor)) __init(void)
 {
-        /* Save the floating points exceptions status and enable them. */
+        /* Save the floating points exceptions status and enable them.
+         */
         fe_status = fegetexcept();
         feclearexcept(FE_ALL_EXCEPT);
         feenableexcept(FE_DIVBYZERO | FE_INVALID | FE_OVERFLOW | FE_UNDERFLOW);
