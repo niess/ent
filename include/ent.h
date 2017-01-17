@@ -336,33 +336,6 @@ enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_process process, double x, double y, double * dcs);
 
 /**
-* Exit events for a neutrino Monte-Carlo transport.
-*/
-enum ent_event {
-        /** No event, e.g. exit when an error occured. */
-        ENT_EVENT_NONE = 0,
-        /** The neutrino has exit the simulation area. */
-        ENT_EVENT_EXIT,
-        /** The neutrino energy has reached a user limit. */
-        ENT_EVENT_LIMIT_ENERGY,
-        /** The neutrino travelled distance has reached a user limit. */
-        ENT_EVENT_LIMIT_DISTANCE,
-        /** The neutrino travelled grammage has reached a user limit. */
-        ENT_EVENT_LIMIT_GRAMMAGE,
-        /** The neutrino has been converted. */
-        ENT_EVENT_CONVERSION,
-};
-
-/**
- * Perform a Monte-Carlo neutrino transport.
- *
- * TODO: the documentation.
- */
-enum ent_return ent_transport(struct ent_physics * physics,
-    struct ent_context * context, struct ent_state * neutrino,
-    struct ent_state * product, enum ent_event * event);
-
-/**
 * Compute a PDF.
 *
 * @param physics    A handle for the Physics.
@@ -382,6 +355,31 @@ enum ent_return ent_transport(struct ent_physics * physics,
 */
 enum ent_return ent_physics_pdf(struct ent_physics * physics,
     enum ent_parton parton, double x, double q2, double * value);
+
+/**
+* Exit events for a neutrino Monte-Carlo transport.
+*/
+enum ent_event {
+        /** No event, e.g. exit when an error occured. */
+        ENT_EVENT_NONE = 0,
+        /** The neutrino has exit the simulation area. */
+        ENT_EVENT_EXIT,
+        /** The neutrino travelled distance has reached a user limit. */
+        ENT_EVENT_LIMIT_DISTANCE,
+        /** The neutrino travelled grammage has reached a user limit. */
+        ENT_EVENT_LIMIT_GRAMMAGE,
+        /** The neutrino has interacted. */
+        ENT_EVENT_INTERACTION,
+};
+
+/**
+ * Perform a Monte-Carlo neutrino transport.
+ *
+ * TODO: the documentation.
+ */
+enum ent_return ent_transport(struct ent_physics * physics,
+    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_state * product, enum ent_event * event);
 
 /**
  * Return a string describing a `ent_return` code.

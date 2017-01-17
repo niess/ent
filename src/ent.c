@@ -58,6 +58,10 @@
 #define ENERGY_MAX 1E+12
 #define ENERGY_N 181
 
+/* Sampling for the tabulations of DIS cumulative cross-sections. */
+#define DIS_Q2_N 100
+#define DIS_X_N 100
+
 #ifndef M_PI
 /* Define pi, if unknown. */
 #define M_PI 3.14159265358979323846
@@ -109,6 +113,16 @@ struct ent_physics {
         struct lha_pdf * pdf;
         /* Entry point for the total cross-sections. */
         double * cs;
+        /* Entry point for the probability density function for DIS. */
+        double * dis_pdf;
+        /* Extrpolation exponent for the DIS PDF. */
+        double * dis_lambda;
+        /* Entry point for the cumulative density function for DIS. */
+        double * dis_cdf;
+        /* Sampling factors for x, in DIS. */
+        double dis_xmin, dis_dlx, dis_rx;
+        /* Sampling factors for Q2, in DIS. */
+        double dis_Q2min, dis_dlQ2, dis_rQ2;
         /* Placeholder for dynamic data. */
         char data[];
 };
@@ -130,10 +144,15 @@ static int memory_padded_size(int size, int pad_size)
 static void * physics_create(int extra_size)
 {
         void * v = malloc(sizeof(struct ent_physics) + extra_size +
-            (PROGET_N - 1) * ENERGY_N * sizeof(double));
+            ((PROGET_N - 1) * ENERGY_N + 8 * DIS_Q2_N * (DIS_X_N + 1) +
+                8 * (DIS_Q2_N - 1) * DIS_X_N) *
+                sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
         p->cs = (double *)(p->data + extra_size);
+        p->dis_pdf = p->cs + (PROGET_N - 1) * ENERGY_N;
+        p->dis_lambda = p->dis_pdf + 8 * DIS_Q2_N * DIS_X_N;
+        p->dis_cdf = p->dis_lambda + 8 * DIS_Q2_N;
         return v;
 }
 
@@ -806,7 +825,7 @@ static double dcs_integrate(struct ent_physics * physics,
 }
 
 /* Tabulate the interactions lengths and processes weights. */
-static void physics_tabulate(struct ent_physics * physics)
+static void physics_tabulate_cs(struct ent_physics * physics)
 {
         const enum ent_process process[PROGET_N - 1] = { ENT_PROCESS_DIS_CC,
                 ENT_PROCESS_DIS_NC, ENT_PROCESS_DIS_CC, ENT_PROCESS_DIS_NC,
@@ -838,6 +857,160 @@ static void physics_tabulate(struct ent_physics * physics)
         }
 }
 
+/* Tabulate the PDF and CDF for DIS events. */
+static void physics_tabulate_dis(struct ent_physics * physics)
+{
+        /* Compute the sampling factors. */
+        physics->dis_xmin = physics->pdf->x[0];
+        physics->dis_dlx =
+            log(physics->pdf->x[physics->pdf->nx - 1] / physics->dis_xmin) /
+            DIS_X_N;
+        physics->dis_rx = exp(physics->dis_dlx);
+        physics->dis_Q2min = physics->pdf->Q2[0];
+        physics->dis_dlQ2 =
+            log(physics->pdf->Q2[physics->pdf->nQ2 - 1] / physics->dis_Q2min) /
+            DIS_Q2_N;
+        physics->dis_rQ2 = exp(physics->dis_dlQ2);
+
+        /* Compute the asymptotic PDF, i.e. y = 1, for the differential
+         * cross-section as (ln(x), ln(Q2)). The corresponding PDF depends only
+         * on (x, Q2) and it provides a majoration of the true DIS PDF.
+         */
+        const int nf = physics->pdf->nf;
+        const double c = 0.25 * (ENT_PHYS_GF * ENT_PHYS_HBC) *
+            (ENT_PHYS_GF * ENT_PHYS_HBC) * ENT_MASS_NUCLEON / M_PI;
+        const double MZ2 = ENT_MASS_Z * ENT_MASS_Z;
+        const double MW2 = ENT_MASS_W * ENT_MASS_W;
+        double * pdf = physics->dis_pdf;
+        int iQ2;
+        for (iQ2 = 0; iQ2 < DIS_Q2_N; iQ2++) {
+                const double Q2 =
+                    physics->dis_Q2min * exp(iQ2 * physics->dis_dlQ2);
+                double rZ = MZ2 / (MZ2 + Q2);
+                rZ *= rZ;
+                double rW = MW2 / (MW2 + Q2);
+                rW *= rW;
+                int ix;
+                for (ix = 0; ix < DIS_Q2_N; ix++, pdf++) {
+                        const double x =
+                            physics->dis_xmin * exp(ix * physics->dis_dlx);
+                        float xfx[LHAPDF_NF_MAX];
+                        lha_pdf_compute(physics->pdf, x, Q2, xfx);
+                        int k;
+                        double factor;
+                        for (k = 0; k < 8; k++) {
+                                const int eps = (k / 2) % 2 ? 1 : -1;
+                                const double Z = (k / 4);
+                                const double N = 1. - Z;
+                                /* Compute the relevant structure functions. */
+                                if ((k % 2) == 0) {
+                                        /* Charged current DIS process. */
+                                        const double d =
+                                            (Z <= 0.) ? 0. : xfx[1 * eps + nf];
+                                        const double u =
+                                            (N <= 0.) ? 0. : xfx[2 * eps + nf];
+                                        const double s = xfx[3 * eps + nf];
+                                        const double b = xfx[5 * eps + nf];
+                                        const double F1 = Z * d + N * u + s + b;
+
+                                        const double dbar =
+                                            (N <= 0.) ? 0. : xfx[-1 * eps + nf];
+                                        const double ubar =
+                                            (Z <= 0.) ? 0. : xfx[-2 * eps + nf];
+                                        const double cbar = xfx[-4 * eps + nf];
+                                        const double F2 =
+                                            N * dbar + Z * ubar + cbar;
+
+                                        factor = 2 * (F1 + F2) * rW;
+                                } else {
+                                        /* Neutral current DIS process. */
+                                        const double d = xfx[1 * eps + nf];
+                                        const double u = xfx[2 * eps + nf];
+                                        const double s = xfx[3 * eps + nf];
+                                        const double c = xfx[4 * eps + nf];
+                                        const double b = xfx[5 * eps + nf];
+
+                                        const double s23 =
+                                            2. * ENT_PHYS_SIN_THETA_W_2 / 3.;
+                                        const double gp2 =
+                                            1. + 4. * s23 * (s23 - 1.);
+                                        const double gm2 = 4. * s23 * s23;
+                                        const double gpp2 =
+                                            1. + s23 * (s23 - 2.);
+                                        const double gpm2 = s23 * s23;
+                                        const double F1 =
+                                            (gp2 + gm2) * (Z * u + N * d + c);
+                                        const double F2 = (gpp2 + gpm2) *
+                                            (Z * d + N * u + s + b);
+
+                                        const double dbar = xfx[-1 * eps + nf];
+                                        const double ubar = xfx[-2 * eps + nf];
+                                        const double sbar = xfx[-3 * eps + nf];
+                                        const double cbar = xfx[-4 * eps + nf];
+                                        const double bbar = xfx[-5 * eps + nf];
+                                        const double F3 = (gm2 + gp2) *
+                                            (Z * ubar + N * dbar + cbar);
+                                        const double F4 = (gpm2 + gpp2) *
+                                            (Z * dbar + N * ubar + sbar + bbar);
+
+                                        factor = 0.5 * (F1 + F2 + F3 + F4) * rZ;
+                                }
+                                pdf[k * DIS_X_N * DIS_Q2_N] = c * factor * Q2;
+                        }
+                }
+        }
+
+        int proget;
+        for (proget = 0; proget < 8; proget++) {
+                /* Below xmin, the asymptotic PDF is modelled as x**lambda(Q2).
+                 * Let's tabulate the lamba values.
+                 */
+                double * lambda = physics->dis_lambda + proget * DIS_Q2_N;
+                for (iQ2 = 0; iQ2 < DIS_Q2_N; iQ2++, lambda++) {
+                        const double f0 = pdf[iQ2 * DIS_X_N];
+                        const double f1 = pdf[iQ2 * DIS_X_N + 1];
+                        if ((f0 > 0.) && (f1 > 0.))
+                                *lambda = log(f0 / f1) / physics->dis_dlx;
+                        else
+                                *lambda = 0.;
+                }
+
+                /* Compute the corresponding CDF using a bilinear
+                 * interpolation.
+                 */
+                lambda = physics->dis_lambda + proget * DIS_Q2_N;
+                pdf = physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
+                double * cdf =
+                    physics->dis_cdf + proget * (DIS_Q2_N - 1) * DIS_X_N;
+                double cdf0 = 0.;
+                for (iQ2 = 0; iQ2 < DIS_Q2_N - 1; iQ2++, cdf++) {
+                        /* First bin is for x <= xmin. Let's use the
+                         * extrapolation model.
+                         */
+                        const double f0 =
+                            pdf[iQ2 * DIS_X_N] / (1. - lambda[iQ2]);
+                        const double f1 =
+                            pdf[(iQ2 + 1) * DIS_X_N] / (1. - lambda[iQ2 + 1]);
+                        cdf[0] = cdf0 + 0.5 * physics->dis_dlQ2 * (f0 + f1);
+
+                        /* Update the CDF for bins with x > xmin. */
+                        const double c =
+                            0.25 * physics->dis_dlQ2 * physics->dis_dlx;
+                        int ix;
+                        for (ix = 0; ix < DIS_X_N - 1; ix++, cdf++) {
+                                const double f00 = pdf[iQ2 * DIS_X_N + ix];
+                                const double f01 = pdf[iQ2 * DIS_X_N + ix + 1];
+                                const double f10 =
+                                    pdf[(iQ2 + 1) * DIS_X_N + ix];
+                                const double f11 =
+                                    pdf[(iQ2 + 1) * DIS_X_N + ix + 1];
+                                cdf[1] = cdf[0] + c * (f00 + f01 + f10 + f11);
+                        }
+                        cdf0 = cdf[0];
+                }
+        }
+}
+
 /* API constructor for a Physics object. */
 enum ent_return ent_physics_create(
     struct ent_physics ** physics, const char * pdf_file)
@@ -856,7 +1029,8 @@ enum ent_return ent_physics_create(
         rc = ENT_RETURN_SUCCESS;
 
         /* Build the tabulations. */
-        physics_tabulate(*physics);
+        physics_tabulate_cs(*physics);
+        physics_tabulate_dis(*physics);
 
 exit:
         if (stream != NULL) fclose(stream);
@@ -1070,11 +1244,191 @@ static enum ent_event transport_straight(struct ent_context * context,
         return event;
 }
 
+/* Sample the x and Q2 parameters in a DIS event using a bilinear interpolation
+ * of the PDF and rejection sampling.
+ */
+static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
+    struct ent_context * context, struct ent_state * neutrino, int proget,
+    double * y_, double * Q2_)
+{
+        /* Unpack the tables, ect ... */
+        const double * const pdf =
+            physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
+        const double * const lambda = physics->dis_lambda + proget * DIS_Q2_N;
+        const double * const cdf =
+            physics->dis_cdf + proget * (DIS_Q2_N - 1) * DIS_X_N;
+        const double Q2max = 2. * ENT_MASS_NUCLEON * neutrino->energy;
+        int iQ2max = ceil(log(Q2max / physics->dis_Q2min) / physics->dis_dlQ2);
+        if (iQ2max >= DIS_Q2_N)
+                iQ2max = DIS_Q2_N - 1;
+        else if (iQ2max < 0.) {
+                /* This should not occur since the total cross-section would
+                 * be null in this case.
+                 */
+                return ENT_RETURN_DOMAIN_ERROR;
+        }
+
+        double y = 0., Q2 = 0.;
+        for (;;) {
+                double x = 0.;
+
+                /* Sample (x, Q2) over a bilinear interpolation of the
+                 * asymptotic pdf in (ln(x), ln(Q2)). First map the table's
+                 * cell index (ix, iQ2) using a dichotomy.
+                 */
+                int i0 = 0, i1 = iQ2max * DIS_X_N;
+                double r = cdf[i1] * context->random(context);
+                while (i1 - i0 > 1) {
+                        int i2 = (i0 + i1) / 2;
+                        if (r > cdf[i2])
+                                i0 = i2;
+                        else
+                                i1 = i2;
+                }
+                int ix = i1 % DIS_X_N;
+                const int iQ2 = i1 / DIS_X_N;
+                r -= cdf[i0];
+
+                if (ix == 0) {
+                        /* The sampled x value is below the smallest tabulated
+                         * value, xmin. A power law model is assumed for the
+                         * PDF. First let's sample Q2 over its marginal CDF.
+                         */
+                        const double lambda0 = lambda[iQ2];
+                        const double lambda1 = lambda[iQ2 + 1];
+                        const double f0 = pdf[iQ2 * DIS_X_N] / (1. - lambda0);
+                        const double f1 =
+                            pdf[(iQ2 + 1) * DIS_X_N] / (1. - lambda1);
+                        const double ay = f1 - f0;
+                        const double by = f0;
+                        const double cy = -2. * r / physics->dis_dlQ2;
+                        const double dy = sqrt(by * by - ay * cy);
+                        const double hy = (dy - by) / ay;
+                        Q2 = physics->dis_Q2min *
+                            exp((iQ2 + hy) * physics->dis_dlQ2);
+
+                        /* Then, let's sample x over its conditional PDF. */
+                        const double r =
+                            (1. - hy) * f0 / ((1. - hy) * f0 * hy * f1);
+                        double lambda =
+                            (context->random(context) <= r) ? lambda0 : lambda1;
+                        x = physics->dis_xmin *
+                            pow(context->random(context), 1. / (1. - lambda));
+
+                } else {
+                        /* Sample over the cell. First sample over the marginal
+                         * CDF for x, given the bilinear model.
+                         */
+                        ix--;
+                        const double f00 = pdf[iQ2 * DIS_X_N + ix];
+                        const double f01 = pdf[iQ2 * DIS_X_N + ix + 1];
+                        const double f10 = pdf[(iQ2 + 1) * DIS_X_N + ix];
+                        const double f11 = pdf[(iQ2 + 1) * DIS_X_N + ix + 1];
+                        const double ax = f10 + f11 - f00 - f01;
+                        const double bx = f00 + f01;
+                        const double cx =
+                            -4. * r / (physics->dis_dlQ2 * physics->dis_dlx);
+                        const double dx = sqrt(bx * bx - ax * cx);
+                        const double hx = (dx - bx) / ax;
+                        x = physics->dis_xmin *
+                            exp((ix + hx) * physics->dis_dlx);
+
+                        /* Then sample over the conditional CDF for Q2. */
+                        const double f0 = f00 * (1. - hx) + f10 * hx;
+                        const double f1 = f01 * (1. - hx) + f11 * hx;
+                        const double ay = f1 - f0;
+                        const double by = f0;
+                        const double cy = -4. * context->random(context) *
+                            (f0 + f1) / (physics->dis_dlQ2 * physics->dis_dlx);
+                        const double dy = sqrt(by * by - ay * cy);
+                        const double hy = (dy - by) / ay;
+                        Q2 = physics->dis_Q2min *
+                            exp((iQ2 + hy) * physics->dis_dlQ2);
+                }
+                if (x <= 0.) continue;
+
+                /* Reject the sampled value if it violates the kinematic
+                 * limit.
+                 */
+                y = Q2 / (x * Q2max);
+                if (y > 1.) continue;
+
+                /* Reject according to the true PDF, i.e. including the
+                 * (1 - y)**2 factor(s). First let us compute the relevant
+                 * structure functions.
+                 */
+                const int nf = physics->pdf->nf;
+                const int eps = (proget / 2) % 2 ? 1 : -1;
+                const double Z = (proget / 4);
+                const double N = 1. - Z;
+                float xfx[LHAPDF_NF_MAX];
+                lha_pdf_compute(physics->pdf, x, Q2, xfx);
+
+                double factor0, factor1;
+                if ((proget % 2) == 0) {
+                        /* Charged current DIS process. */
+                        const double d = (Z <= 0.) ? 0. : xfx[1 * eps + nf];
+                        const double u = (N <= 0.) ? 0. : xfx[2 * eps + nf];
+                        const double s = xfx[3 * eps + nf];
+                        const double b = xfx[5 * eps + nf];
+                        const double F1 = Z * d + N * u + s + b;
+
+                        const double dbar = (N <= 0.) ? 0. : xfx[-1 * eps + nf];
+                        const double ubar = (Z <= 0.) ? 0. : xfx[-2 * eps + nf];
+                        const double cbar = xfx[-4 * eps + nf];
+                        const double F2 = N * dbar + Z * ubar + cbar;
+
+                        factor0 = F1 + F2;
+                        factor1 = F1 + F2 * (1. - y) * (1. - y);
+                } else {
+                        /* Neutral current DIS process. */
+                        const double d = xfx[1 * eps + nf];
+                        const double u = xfx[2 * eps + nf];
+                        const double s = xfx[3 * eps + nf];
+                        const double c = xfx[4 * eps + nf];
+                        const double b = xfx[5 * eps + nf];
+
+                        const double s23 = 2. * ENT_PHYS_SIN_THETA_W_2 / 3.;
+                        const double gp2 = 1. + 4. * s23 * (s23 - 1.);
+                        const double gm2 = 4. * s23 * s23;
+                        const double gpp2 = 1. + s23 * (s23 - 2.);
+                        const double gpm2 = s23 * s23;
+                        const double y1 = 1. - y;
+                        const double y12 = y1 * y1;
+                        factor0 = (gp2 + gm2) * (Z * u + N * d + c);
+                        factor1 = (gp2 + gm2 * y12) * (Z * u + N * d + c);
+                        factor0 += (gpp2 + gpm2) * (Z * d + N * u + s + b);
+                        factor1 +=
+                            (gpp2 + gpm2 * y12) * (Z * d + N * u + s + b);
+
+                        const double dbar = xfx[-1 * eps + nf];
+                        const double ubar = xfx[-2 * eps + nf];
+                        const double sbar = xfx[-3 * eps + nf];
+                        const double cbar = xfx[-4 * eps + nf];
+                        const double bbar = xfx[-5 * eps + nf];
+                        factor0 += (gm2 + gp2) * (Z * ubar + N * dbar + cbar);
+                        factor1 +=
+                            (gm2 + gp2 * y12) * (Z * ubar + N * dbar + cbar);
+                        factor0 +=
+                            (gpm2 + gpp2) * (Z * dbar + N * ubar + sbar + bbar);
+                        factor1 += (gpm2 + gpp2 * y12) *
+                            (Z * dbar + N * ubar + sbar + bbar);
+                }
+
+                /* Then, reject sample accordingly. */
+                if (context->random(context) * factor0 <= factor1) break;
+        }
+
+        *y_ = y;
+        *Q2_ = Q2;
+        return ENT_RETURN_SUCCESS;
+}
+
 /* Sample the inelasticity, _y_, for an interaction with an electron. The
  * sampling is done with a combination of inverse and rejection sampling.
  */
-static enum ent_event transport_sample_y(struct ent_context * context,
-    struct ent_state * state, int proget, double * y_, enum ent_pid * ejectile,
+static double transport_sample_y(struct ent_context * context,
+    struct ent_state * state, int proget, enum ent_pid * ejectile,
     enum ent_pid * recoil, double * mu)
 {
         const double yZ =
@@ -1085,7 +1439,6 @@ static enum ent_event transport_sample_y(struct ent_context * context,
         const double Le = 2. * ENT_PHYS_SIN_THETA_W_2 - 1.;
         const double Le2 = Le * Le;
 
-        enum ent_event event = ENT_EVENT_NONE;
         *mu = ENT_MASS_ELECTRON;
         *recoil = ENT_PID_ELECTRON;
         double y;
@@ -1166,7 +1519,6 @@ static enum ent_event transport_sample_y(struct ent_context * context,
                         *recoil = ENT_PID_TAU;
                         *mu = ENT_MASS_TAU;
                 }
-                event = ENT_EVENT_CONVERSION;
         } else {
                 const double u = context->random(context);
                 y = 1. - pow(u, 1. / 3.);
@@ -1179,11 +1531,9 @@ static enum ent_event transport_sample_y(struct ent_context * context,
                         *recoil = ENT_PID_TAU;
                         *mu = ENT_MASS_TAU;
                 }
-                event = ENT_EVENT_CONVERSION;
         }
 
-        *y_ = y;
-        return event;
+        return y;
 }
 
 /* Rotate the state direction. */
@@ -1242,11 +1592,11 @@ static void transport_rotate(
 }
 
 /* Process an interaction vertex. */
-static enum ent_return transport_vertex(struct ent_context * context,
-    struct ent_state * neutrino, struct ent_state * product, double * cs,
-    enum ent_event * event)
+static enum ent_return transport_vertex(struct ent_physics * physics,
+    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_state * product, double * cs)
 {
-        *event = ENT_EVENT_NONE;
+        /* TODO: backward sampling. */
 
         /* Randomise the interaction process and the target. */
         const double r = cs[PROGET_N - 1] * context->random(context);
@@ -1256,20 +1606,149 @@ static enum ent_return transport_vertex(struct ent_context * context,
                 if (r <= cs[i]) break;
 
         /* Process the corresponding vertex. */
-        enum ent_pid ejectile = neutrino->pid;
-        enum ent_pid recoil = ENT_PID_NONE;
         if (i <= PROGET_NC_NU_BAR_PROTON) {
-                /* TODO: sample DIS. */
+                double y, Q2;
+                enum ent_return rc = transport_sample_yQ2(
+                    physics, context, neutrino, i, &y, &Q2);
+                if (rc != ENT_RETURN_SUCCESS) return rc;
+                struct ent_state product_;
+                memcpy(&product_, neutrino, sizeof(product_));
+                if ((i % 2) == 0) {
+                        /* Charged current event : compute the final states. */
+                        double mu;
+                        if (neutrino->pid == ENT_PID_NU_E) {
+                                mu = ENT_MASS_ELECTRON;
+                                product_.pid = ENT_PID_ELECTRON;
+                        } else if (neutrino->pid == ENT_PID_NU_BAR_E) {
+                                mu = ENT_MASS_ELECTRON;
+                                product_.pid = ENT_PID_POSITRON;
+                        } else if (neutrino->pid == ENT_PID_NU_MU) {
+                                mu = ENT_MASS_MUON;
+                                product_.pid = ENT_PID_MUON;
+                        } else if (neutrino->pid == ENT_PID_NU_BAR_MU) {
+                                mu = ENT_MASS_MUON;
+                                product_.pid = ENT_PID_MUON_BAR;
+                        } else if (neutrino->pid == ENT_PID_NU_TAU) {
+                                mu = ENT_MASS_TAU;
+                                product_.pid = ENT_PID_TAU;
+                        } else if (neutrino->pid == ENT_PID_NU_BAR_TAU) {
+                                mu = ENT_MASS_TAU;
+                                product_.pid = ENT_PID_TAU_BAR;
+                        } else {
+                                return ENT_RETURN_DOMAIN_ERROR;
+                        }
+
+                        double Emu = neutrino->energy * (1. - y);
+                        if (Emu > 0.) {
+                                /* Compute the product lepton's energy and
+                                 * direction.
+                                 */
+                                const double pmu = sqrt(Emu * (Emu + 2. * mu));
+                                double ct = (Emu -
+                                                0.5 * (Q2 + mu * mu) /
+                                                    neutrino->energy) /
+                                    pmu;
+                                if (ct > 1.)
+                                        ct = 1.;
+                                else if (ct < -1.)
+                                        ct = -1.;
+                                const double phi =
+                                    2. * M_PI * context->random(context);
+                                const double cp = cos(phi);
+                                const double sp = sin(phi);
+                                transport_rotate(&product_, ct, cp, sp);
+
+                                /* Compute the hadron's average direction
+                                 * from momentum conservation.
+                                 */
+                                neutrino->direction[0] =
+                                    neutrino->direction[0] * neutrino->energy -
+                                    pmu * product_.direction[0];
+                                neutrino->direction[1] =
+                                    neutrino->direction[1] * neutrino->energy -
+                                    pmu * product_.direction[1];
+                                neutrino->direction[2] =
+                                    neutrino->direction[2] * neutrino->energy -
+                                    pmu * product_.direction[2];
+                                double d = neutrino->direction[0] *
+                                        neutrino->direction[0] +
+                                    neutrino->direction[1] *
+                                        neutrino->direction[1] +
+                                    neutrino->direction[2] *
+                                        neutrino->direction[2];
+                                if (d > 0.) {
+                                        d = 1. / sqrt(d);
+                                        neutrino->direction[0] *= d;
+                                        neutrino->direction[1] *= d;
+                                        neutrino->direction[2] *= d;
+                                }
+                        } else
+                                Emu = 0.;
+                        product_.energy = Emu;
+                        neutrino->energy *= y;
+                        neutrino->pid = ENT_PID_HADRON;
+                } else {
+                        /* Neutral current event : compute the final states. */
+                        product_.pid = ENT_PID_HADRON;
+                        if (y < 1.) {
+                                const double Ep = neutrino->energy * (1. - y);
+                                double ct =
+                                    1. - 0.5 * Q2 / (neutrino->energy * Ep);
+                                if (ct < -1.) ct = -1.;
+                                const double phi =
+                                    2. * M_PI * context->random(context);
+                                const double cp = cos(phi);
+                                const double sp = sin(phi);
+                                transport_rotate(neutrino, ct, cp, sp);
+
+                                /* Compute the hadron's average direction
+                                 * from momentum conservation.
+                                 */
+                                const double Eh = neutrino->energy * y;
+                                product_.direction[0] =
+                                    product_.direction[0] * neutrino->energy -
+                                    Ep * neutrino->direction[0];
+                                product_.direction[1] =
+                                    product_.direction[1] * neutrino->energy -
+                                    Ep * neutrino->direction[1];
+                                product_.direction[2] =
+                                    product_.direction[2] * neutrino->energy -
+                                    Ep * neutrino->direction[2];
+                                double d = product_.direction[0] *
+                                        product_.direction[0] +
+                                    product_.direction[1] *
+                                        product_.direction[1] +
+                                    product_.direction[2] *
+                                        product_.direction[2];
+                                if (d > 0.) {
+                                        d = 1. / sqrt(d);
+                                        product_.direction[0] *= d;
+                                        product_.direction[1] *= d;
+                                        product_.direction[2] *= d;
+                                }
+                                product_.energy = Eh;
+                                neutrino->energy = Ep;
+                        } else {
+                                product_.energy = neutrino->energy;
+                                neutrino->energy = 0.;
+                        }
+                }
+
+                /* Copy back the product data if requested. */
+                if (product != NULL)
+                        memcpy(product, &product_, sizeof(product_));
         } else if (i < PROGET_GLASHOW_HADRONS) {
                 /* This is an interaction with an atomic electron and a
                  * neutrino in the final states.
                  */
+                enum ent_pid ejectile = neutrino->pid;
+                enum ent_pid recoil = ENT_PID_NONE;
                 double y, ce, cr;
                 for (;;) {
                         /* Let's first sample the inelasticity _y_. */
                         double mu;
-                        *event = transport_sample_y(
-                            context, neutrino, i, &y, &ejectile, &recoil, &mu);
+                        y = transport_sample_y(
+                            context, neutrino, i, &ejectile, &recoil, &mu);
                         if (y < mu / neutrino->energy) continue;
 
                         /* Then, compute the cosines of the polar angles. */
@@ -1308,7 +1787,6 @@ static enum ent_return transport_vertex(struct ent_context * context,
                 /* This is a total conversion of a anti nu_e neutrino on an
                  * atomic electron. */
                 neutrino->pid = ENT_PID_HADRON;
-                *event = ENT_EVENT_CONVERSION;
         } else {
                 return ENT_RETURN_DOMAIN_ERROR;
         }
@@ -1338,8 +1816,8 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
                 i1 = i0 + 1;
                 h -= i0;
         }
-        const double * const cs0 = physics->cs + i0 * PROGET_N;
-        const double * const cs1 = physics->cs + i1 * PROGET_N;
+        const double * const cs0 = physics->cs + i0 * (PROGET_N - 1);
+        const double * const cs1 = physics->cs + i1 * (PROGET_N - 1);
 
         /* Build the table of cumulative cross-section values. */
         double N0, N1, Z0, Z1;
@@ -1421,17 +1899,6 @@ enum ent_return ent_transport(struct ent_physics * physics,
         /* Check for an initial limit violation. */
         enum ent_return rc = ENT_RETURN_SUCCESS;
         enum ent_event event_ = ENT_EVENT_NONE;
-        if (context->energy_limit > 0.) {
-                if (context->forward &&
-                    (neutrino->energy <= context->energy_limit)) {
-                        event_ = ENT_EVENT_LIMIT_ENERGY;
-                        goto exit;
-                } else if (!context->forward &&
-                    (neutrino->energy >= context->energy_limit)) {
-                        event_ = ENT_EVENT_LIMIT_ENERGY;
-                        goto exit;
-                }
-        }
         if ((context->distance_max > 0.) &&
             (neutrino->distance >= context->distance_max)) {
                 event_ = ENT_EVENT_LIMIT_DISTANCE;
@@ -1451,55 +1918,45 @@ enum ent_return ent_transport(struct ent_physics * physics,
                 goto exit;
         if (event_ != ENT_EVENT_NONE) goto exit;
 
-        /* Main transport loop. */
-        for (;;) {
-                /* Compute the cross-sections. */
-                double cs[PROGET_N];
-                if ((rc = transport_cross_section(physics, neutrino->pid,
-                         neutrino->energy, medium->Z, medium->A, cs)) !=
-                    ENT_RETURN_SUCCESS)
-                        goto exit;
+        /* Compute the cross-sections. */
+        double cs[PROGET_N];
+        if ((rc = transport_cross_section(physics, neutrino->pid,
+                 neutrino->energy, medium->Z, medium->A, cs)) !=
+            ENT_RETURN_SUCCESS)
+                goto exit;
 
-                /* Randomise the depth of the next interaction. */
-                enum ent_event foreseen = ENT_EVENT_NONE;
-                const double Xint =
-                    medium->A * 1E-03 / (cs[PROGET_N - 1] * ENT_PHYS_NA);
-                double Xlim =
-                    neutrino->grammage - Xint * log(context->random(context));
-                if (context->grammage_max && (context->grammage_max < Xlim)) {
-                        Xlim = context->grammage_max;
-                        foreseen = ENT_EVENT_LIMIT_GRAMMAGE;
-                }
+        /* Randomise the depth of the next interaction. */
+        enum ent_event foreseen = ENT_EVENT_NONE;
+        const double Xint =
+            medium->A * 1E-03 / (cs[PROGET_N - 1] * ENT_PHYS_NA);
+        double Xlim = neutrino->grammage - Xint * log(context->random(context));
+        if (context->grammage_max && (context->grammage_max < Xlim)) {
+                Xlim = context->grammage_max;
+                foreseen = ENT_EVENT_LIMIT_GRAMMAGE;
+        }
 
-                if (step)
-                        for (;;) {
-                                /* Step until an event occurs. */
-                                if ((rc = transport_step(context, neutrino,
-                                         &medium, &step, &density, Xlim,
-                                         &event_)) != ENT_RETURN_SUCCESS)
-                                        goto exit;
-                                if (event_ != ENT_EVENT_NONE) break;
-                        }
-                else {
-                        /* This is a uniform medium of infinite
-                         * extension.
-                         * Let's do a single straight step.
-                         */
-                        event_ = transport_straight(
-                            context, neutrino, density, Xlim);
-                }
-
-                /* Process any event. */
-                if ((event_ == ENT_EVENT_LIMIT_GRAMMAGE) &&
-                    (foreseen == ENT_EVENT_NONE)) {
-                        /* An interaction occured. Let's randomise it.
-                         */
-                        if ((rc = transport_vertex(context, neutrino, product,
-                                 cs, &event_)) != ENT_RETURN_SUCCESS)
+        if (step)
+                for (;;) {
+                        /* Step until an event occurs. */
+                        if ((rc = transport_step(context, neutrino, &medium,
+                                 &step, &density, Xlim, &event_)) !=
+                            ENT_RETURN_SUCCESS)
                                 goto exit;
-                        if (event_ != ENT_EVENT_NONE) goto exit;
-                } else
-                        goto exit;
+                        if (event_ != ENT_EVENT_NONE) break;
+                }
+        else {
+                /* This is a uniform medium of infinite
+                 * extension.
+                 * Let's do a single straight step.
+                 */
+                event_ = transport_straight(context, neutrino, density, Xlim);
+        }
+
+        /* Process any interaction. */
+        if ((event_ == ENT_EVENT_LIMIT_GRAMMAGE) &&
+            (foreseen == ENT_EVENT_NONE)) {
+                event_ = ENT_EVENT_INTERACTION;
+                rc = transport_vertex(physics, context, neutrino, product, cs);
         }
 
 exit:
