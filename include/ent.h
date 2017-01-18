@@ -80,7 +80,11 @@ enum ent_pid {
         /** The tau neutrino. */
         ENT_PID_NU_TAU = 16,
         /* A generic hadronic product. */
-        ENT_PID_HADRON = 100
+        ENT_PID_HADRON = 100,
+        /* A generic hadronic product. */
+        ENT_PID_NEUTRON = 2112,
+        /* A generic hadronic product. */
+        ENT_PID_PROTON = 2212
 };
 
 /**
@@ -371,6 +375,15 @@ enum ent_event {
         /** The neutrino has interacted. */
         ENT_EVENT_INTERACTION,
 };
+
+/**
+ * Process a Monte-Carlo interaction vertex.
+ *
+ * TODO: the documentation.
+ */
+enum ent_return ent_vertex(struct ent_physics * physics,
+    struct ent_context * context, enum ent_process process, enum ent_pid target,
+    struct ent_state * neutrino, struct ent_state * product);
 
 /**
  * Perform a Monte-Carlo neutrino transport.

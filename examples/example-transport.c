@@ -44,7 +44,7 @@ static double random(struct ent_context * context)
 
 int main()
 {
-        /* Register the error handler for GULL library functions. */
+        /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
 
         /* Create a new Physics environment. */

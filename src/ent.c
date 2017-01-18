@@ -180,6 +180,7 @@ const char * ent_error_function(ent_function_t * caller)
         REGISTER_FUNCTION(ent_physics_create);
         REGISTER_FUNCTION(ent_physics_dcs);
         REGISTER_FUNCTION(ent_physics_pdf);
+        REGISTER_FUNCTION(ent_vertex);
         REGISTER_FUNCTION(ent_transport);
 
         /* Other API functions. */
@@ -864,12 +865,12 @@ static void physics_tabulate_dis(struct ent_physics * physics)
         physics->dis_xmin = physics->pdf->x[0];
         physics->dis_dlx =
             log(physics->pdf->x[physics->pdf->nx - 1] / physics->dis_xmin) /
-            DIS_X_N;
+            (DIS_X_N - 1);
         physics->dis_rx = exp(physics->dis_dlx);
         physics->dis_Q2min = physics->pdf->Q2[0];
         physics->dis_dlQ2 =
             log(physics->pdf->Q2[physics->pdf->nQ2 - 1] / physics->dis_Q2min) /
-            DIS_Q2_N;
+            (DIS_Q2_N - 1);
         physics->dis_rQ2 = exp(physics->dis_dlQ2);
 
         /* Compute the asymptotic PDF, i.e. y = 1, for the differential
@@ -877,8 +878,8 @@ static void physics_tabulate_dis(struct ent_physics * physics)
          * on (x, Q2) and it provides a majoration of the true DIS PDF.
          */
         const int nf = physics->pdf->nf;
-        const double c = 0.25 * (ENT_PHYS_GF * ENT_PHYS_HBC) *
-            (ENT_PHYS_GF * ENT_PHYS_HBC) * ENT_MASS_NUCLEON / M_PI;
+        const double c = (ENT_PHYS_GF * ENT_PHYS_HBC) *
+            (ENT_PHYS_GF * ENT_PHYS_HBC) / M_PI;
         const double MZ2 = ENT_MASS_Z * ENT_MASS_Z;
         const double MW2 = ENT_MASS_W * ENT_MASS_W;
         double * pdf = physics->dis_pdf;
@@ -891,7 +892,7 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                 double rW = MW2 / (MW2 + Q2);
                 rW *= rW;
                 int ix;
-                for (ix = 0; ix < DIS_Q2_N; ix++, pdf++) {
+                for (ix = 0; ix < DIS_X_N; ix++, pdf++) {
                         const double x =
                             physics->dis_xmin * exp(ix * physics->dis_dlx);
                         float xfx[LHAPDF_NF_MAX];
@@ -921,7 +922,7 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                                         const double F2 =
                                             N * dbar + Z * ubar + cbar;
 
-                                        factor = 2 * (F1 + F2) * rW;
+                                        factor = (F1 + F2) * rW;
                                 } else {
                                         /* Neutral current DIS process. */
                                         const double d = xfx[1 * eps + nf];
@@ -953,7 +954,7 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                                         const double F4 = (gpm2 + gpp2) *
                                             (Z * dbar + N * ubar + sbar + bbar);
 
-                                        factor = 0.5 * (F1 + F2 + F3 + F4) * rZ;
+                                        factor = 0.25 * (F1 + F2 + F3 + F4) * rZ;
                                 }
                                 pdf[k * DIS_X_N * DIS_Q2_N] = c * factor * Q2;
                         }
@@ -965,6 +966,7 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                 /* Below xmin, the asymptotic PDF is modelled as x**lambda(Q2).
                  * Let's tabulate the lamba values.
                  */
+                pdf = physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
                 double * lambda = physics->dis_lambda + proget * DIS_Q2_N;
                 for (iQ2 = 0; iQ2 < DIS_Q2_N; iQ2++, lambda++) {
                         const double f0 = pdf[iQ2 * DIS_X_N];
@@ -979,7 +981,6 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                  * interpolation.
                  */
                 lambda = physics->dis_lambda + proget * DIS_Q2_N;
-                pdf = physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
                 double * cdf =
                     physics->dis_cdf + proget * (DIS_Q2_N - 1) * DIS_X_N;
                 double cdf0 = 0.;
@@ -992,6 +993,9 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                         const double f1 =
                             pdf[(iQ2 + 1) * DIS_X_N] / (1. - lambda[iQ2 + 1]);
                         cdf[0] = cdf0 + 0.5 * physics->dis_dlQ2 * (f0 + f1);
+
+                        /* DEBUG */
+                        cdf[0] = cdf0;
 
                         /* Update the CDF for bins with x > xmin. */
                         const double c =
@@ -1261,7 +1265,8 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
         int iQ2max = ceil(log(Q2max / physics->dis_Q2min) / physics->dis_dlQ2);
         if (iQ2max >= DIS_Q2_N)
                 iQ2max = DIS_Q2_N - 1;
-        else if (iQ2max < 0.) {
+        else if (iQ2max == 0) iQ2max = 1;
+        else if (iQ2max < 0) {
                 /* This should not occur since the total cross-section would
                  * be null in this case.
                  */
@@ -1276,7 +1281,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                  * asymptotic pdf in (ln(x), ln(Q2)). First map the table's
                  * cell index (ix, iQ2) using a dichotomy.
                  */
-                int i0 = 0, i1 = iQ2max * DIS_X_N;
+                int i0 = 0, i1 = iQ2max * DIS_X_N - 1;
                 double r = cdf[i1] * context->random(context);
                 while (i1 - i0 > 1) {
                         int i2 = (i0 + i1) / 2;
@@ -1285,8 +1290,8 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                         else
                                 i1 = i2;
                 }
-                int ix = i1 % DIS_X_N;
-                const int iQ2 = i1 / DIS_X_N;
+                int ix = i0 % DIS_X_N;
+                const int iQ2 = i0 / DIS_X_N;
                 r -= cdf[i0];
 
                 if (ix == 0) {
@@ -1309,12 +1314,14 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
 
                         /* Then, let's sample x over its conditional PDF. */
                         const double r =
-                            (1. - hy) * f0 / ((1. - hy) * f0 * hy * f1);
+                            (1. - hy) * f0 / ((1. - hy) * f0 + hy * f1);
                         double lambda =
                             (context->random(context) <= r) ? lambda0 : lambda1;
                         x = physics->dis_xmin *
                             pow(context->random(context), 1. / (1. - lambda));
 
+                        /* DEBUG */
+                        x = 0.;
                 } else {
                         /* Sample over the cell. First sample over the marginal
                          * CDF for x, given the bilinear model.
@@ -1338,14 +1345,13 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                         const double f1 = f01 * (1. - hx) + f11 * hx;
                         const double ay = f1 - f0;
                         const double by = f0;
-                        const double cy = -4. * context->random(context) *
-                            (f0 + f1) / (physics->dis_dlQ2 * physics->dis_dlx);
+                        const double cy = -context->random(context) * (f0 + f1);
                         const double dy = sqrt(by * by - ay * cy);
                         const double hy = (dy - by) / ay;
                         Q2 = physics->dis_Q2min *
                             exp((iQ2 + hy) * physics->dis_dlQ2);
                 }
-                if (x <= 0.) continue;
+                if ((x <= 0.) || (Q2 >= Q2max)) continue;
 
                 /* Reject the sampled value if it violates the kinematic
                  * limit.
@@ -1593,27 +1599,20 @@ static void transport_rotate(
 
 /* Process an interaction vertex. */
 static enum ent_return transport_vertex(struct ent_physics * physics,
-    struct ent_context * context, struct ent_state * neutrino,
-    struct ent_state * product, double * cs)
+    struct ent_context * context, int proget, struct ent_state * neutrino,
+    struct ent_state * product)
 {
         /* TODO: backward sampling. */
 
-        /* Randomise the interaction process and the target. */
-        const double r = cs[PROGET_N - 1] * context->random(context);
-        if (r < 0.) return ENT_RETURN_DOMAIN_ERROR;
-        int i;
-        for (i = 0; i < PROGET_N; i++)
-                if (r <= cs[i]) break;
-
         /* Process the corresponding vertex. */
-        if (i <= PROGET_NC_NU_BAR_PROTON) {
+        if (proget <= PROGET_NC_NU_BAR_PROTON) {
                 double y, Q2;
                 enum ent_return rc = transport_sample_yQ2(
-                    physics, context, neutrino, i, &y, &Q2);
+                    physics, context, neutrino, proget, &y, &Q2);
                 if (rc != ENT_RETURN_SUCCESS) return rc;
                 struct ent_state product_;
                 memcpy(&product_, neutrino, sizeof(product_));
-                if ((i % 2) == 0) {
+                if ((proget % 2) == 0) {
                         /* Charged current event : compute the final states. */
                         double mu;
                         if (neutrino->pid == ENT_PID_NU_E) {
@@ -1737,7 +1736,7 @@ static enum ent_return transport_vertex(struct ent_physics * physics,
                 /* Copy back the product data if requested. */
                 if (product != NULL)
                         memcpy(product, &product_, sizeof(product_));
-        } else if (i < PROGET_GLASHOW_HADRONS) {
+        } else if (proget < PROGET_GLASHOW_HADRONS) {
                 /* This is an interaction with an atomic electron and a
                  * neutrino in the final states.
                  */
@@ -1748,7 +1747,7 @@ static enum ent_return transport_vertex(struct ent_physics * physics,
                         /* Let's first sample the inelasticity _y_. */
                         double mu;
                         y = transport_sample_y(
-                            context, neutrino, i, &ejectile, &recoil, &mu);
+                            context, neutrino, proget, &ejectile, &recoil, &mu);
                         if (y < mu / neutrino->energy) continue;
 
                         /* Then, compute the cosines of the polar angles. */
@@ -1783,7 +1782,7 @@ static enum ent_return transport_vertex(struct ent_physics * physics,
                 neutrino->pid = ejectile;
                 neutrino->energy = neutrino->energy * (1. - y);
                 transport_rotate(neutrino, ce, cp, sp);
-        } else if (i == PROGET_GLASHOW_HADRONS) {
+        } else if (proget == PROGET_GLASHOW_HADRONS) {
                 /* This is a total conversion of a anti nu_e neutrino on an
                  * atomic electron. */
                 neutrino->pid = ENT_PID_HADRON;
@@ -1881,6 +1880,83 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
+/* API interface for an interaction vertex. */
+enum ent_return ent_vertex(struct ent_physics * physics,
+    struct ent_context * context, enum ent_process process, enum ent_pid target,
+    struct ent_state * neutrino, struct ent_state * product)
+{
+        ENT_ACKNOWLEDGE(ent_vertex);
+        if (product != NULL) product->pid = ENT_PID_NONE;
+
+        /* Check and format the inputs. */
+        if ((physics == NULL) || (context == NULL) ||
+            (context->random == NULL) || (neutrino == NULL))
+                ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
+
+        /* TODO: backward case. */
+
+        /* Compute the process-target index. */
+        const int pid = neutrino->pid;
+        const int apid = abs(pid);
+        if ((apid != ENT_PID_NU_E) && (apid != ENT_PID_NU_MU) &&
+            (apid != ENT_PID_NU_TAU))
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        int proget;
+        if (process == ENT_PROCESS_DIS_CC) {
+                if (target == ENT_PID_NEUTRON)
+                        proget = PROGET_CC_NU_NEUTRON;
+                else if (target == ENT_PID_PROTON)
+                        proget = PROGET_CC_NU_PROTON;
+                else
+                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        } else if (process == ENT_PROCESS_DIS_NC) {
+                if (target == ENT_PID_NEUTRON)
+                        proget = PROGET_NC_NU_NEUTRON;
+                else if (target == ENT_PID_PROTON)
+                        proget = PROGET_NC_NU_PROTON;
+                else
+                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        } else {
+                if (target != ENT_PID_ELECTRON)
+                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+                if (process == ENT_PROCESS_ELASTIC) {
+                        if (pid == ENT_PID_NU_E)
+                                proget = PROGET_ELASTIC_NU_E;
+                        else if (pid == ENT_PID_NU_BAR_E)
+                                proget = PROGET_ELASTIC_NU_BAR_E;
+                        else if ((pid == ENT_PID_NU_MU) ||
+                            (pid == ENT_PID_NU_TAU))
+                                proget = PROGET_ELASTIC_NU_X;
+                        else
+                                proget = PROGET_ELASTIC_NU_BAR_X;
+                } else if (process == ENT_PROCESS_INVERSE_MUON) {
+                        if (pid == ENT_PID_NU_MU)
+                                proget = PROGET_INVERSE_NU_MU_MU;
+                        else if (pid == ENT_PID_NU_BAR_E)
+                                proget = PROGET_INVERSE_NU_BAR_E_MU;
+                        else
+                                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+                } else if (process == ENT_PROCESS_INVERSE_TAU) {
+                        if (pid == ENT_PID_NU_TAU)
+                                proget = PROGET_INVERSE_NU_TAU_TAU;
+                        else if (pid == ENT_PID_NU_BAR_E)
+                                proget = PROGET_INVERSE_NU_BAR_E_TAU;
+                        else
+                                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+                } else if (process == ENT_PROCESS_GLASHOW_HADRON) {
+                        if (pid == ENT_PID_NU_BAR_E)
+                                proget = PROGET_GLASHOW_HADRONS;
+                        else
+                                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+                } else
+                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
+
+        /* Process the vertex. */
+        ENT_RETURN(
+            transport_vertex(physics, context, proget, neutrino, product));
+}
+
 /* API interface for the neutrino tranport. */
 enum ent_return ent_transport(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * neutrino,
@@ -1956,7 +2032,17 @@ enum ent_return ent_transport(struct ent_physics * physics,
         if ((event_ == ENT_EVENT_LIMIT_GRAMMAGE) &&
             (foreseen == ENT_EVENT_NONE)) {
                 event_ = ENT_EVENT_INTERACTION;
-                rc = transport_vertex(physics, context, neutrino, product, cs);
+                /* Randomise the interaction process and the target. */
+                const double r = cs[PROGET_N - 1] * context->random(context);
+                if (r < 0.)
+                        rc = ENT_RETURN_DOMAIN_ERROR;
+                else {
+                        int proget;
+                        for (proget = 0; proget < PROGET_N; proget++)
+                                if (r <= cs[proget]) break;
+                        rc = transport_vertex(
+                            physics, context, proget, neutrino, product);
+                }
         }
 
 exit:

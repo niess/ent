@@ -1,4 +1,4 @@
-CFLAGS := -O2 -std=c99 -pedantic -fPIC -Wall
+CFLAGS := -O0 -g -std=c99 -pedantic -fPIC -Wall
 INCLUDE := -Iinclude
 LIBS := -lm
 
@@ -7,7 +7,7 @@ LIBS := -lm
 lib: lib/libent.so
 	@rm -f *.o
 
-examples: bin/example-physics bin/example-transport
+examples: bin/example-physics bin/example-transport bin/example-vertex
 
 clean:
 	@rm -rf bin lib *.o
@@ -18,4 +18,4 @@ lib/lib%.so: src/%.c include/%.h
 
 bin/example-%: examples/example-%.c lib
 	@mkdir -p bin
-	@gcc -o $@ $(CFLAGS) $(INCLUDE) $< -Llib -lent
+	@gcc -o $@ $(CFLAGS) $(INCLUDE) $< -Llib -lent $(LIBS)

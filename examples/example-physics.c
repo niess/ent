@@ -22,7 +22,7 @@ static void handle_error(enum ent_return rc, ent_function_t * caller)
 
 int main()
 {
-        /* Register the error handler for GULL library functions. */
+        /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
 
         /* Create a new Physics environment. */
