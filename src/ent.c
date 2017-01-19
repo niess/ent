@@ -1225,6 +1225,11 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * neutrino, int proget,
     double * y_, double * Q2_)
 {
+/* Energy threshold between brute force rejection sampling or a
+ * matched enveloppe.
+ */
+#define DIS_BRUTE_FORCE_THRESHOLD 1E+07
+
         /* Unpack the tables, ect ... */
         const double * const pdf =
             physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
@@ -1243,36 +1248,92 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                 return ENT_RETURN_DOMAIN_ERROR;
         }
         const double ly0 =
-            log(physics->dis_Q2min / (physics->dis_xmin * Q2max));
+            log(physics->dis_Q2min / (physics->dis_xmin * Q2max)) -
+            physics->dis_dlx;
 
         double y = 0., Q2 = 0.;
         for (;;) {
                 double x = 0.;
 
                 /* Sample (x, Q2) over a bilinear interpolation of the
-                 * asymptotic pdf in (ln(x), ln(Q2)). First map the table's
-                 * cell index (ix, iQ2) using a dichotomy.
+                 * asymptotic pdf in (ln(x), ln(Q2)).
                  */
                 int ix, iQ2;
-                int i1 = iQ2max * (DIS_X_N - 1) - 1;
-                double r = cdf[i1] * context->random(context);
-                if (r <= cdf[0]) {
-                        i1 = ix = iQ2 = 0;
-                } else {
-                        int i0 = 0;
-                        while (i1 - i0 > 1) {
-                                int i2 = (i0 + i1) / 2;
-                                if (r > cdf[i2])
-                                        i0 = i2;
-                                else
-                                        i1 = i2;
+                double r;
+                if (neutrino->energy >= DIS_BRUTE_FORCE_THRESHOLD) {
+                        /* Map the table's cell index (ix, iQ2) using a
+                         * dichotomy and rejection sampling. */
+                        int i1 = iQ2max * (DIS_X_N - 1) - 1;
+                        r = cdf[i1] * context->random(context);
+                        if (r <= cdf[0]) {
+                                i1 = ix = iQ2 = 0;
+                        } else {
+                                int i0 = 0;
+                                while (i1 - i0 > 1) {
+                                        int i2 = (i0 + i1) / 2;
+                                        if (r > cdf[i2])
+                                                i0 = i2;
+                                        else
+                                                i1 = i2;
+                                }
+                                ix = i1 % (DIS_X_N - 1);
+                                iQ2 = i1 / (DIS_X_N - 1);
+                                const double ly = ly0 +
+                                    iQ2 * physics->dis_dlQ2 -
+                                    ix * physics->dis_dlx;
+                                if (ly >= 0.) continue;
+                                r -= cdf[i0];
                         }
-                        ix = i1 % (DIS_X_N - 1);
-                        iQ2 = i1 / (DIS_X_N - 1);
-                        const double ly = ly0 + iQ2 * physics->dis_dlQ2 -
-                            (ix + 1) * physics->dis_dlx;
-                        if (ly >= 0.) continue;
-                        r -= cdf[i0];
+                } else {
+                        /* At low energies it becomes more efficient to spend
+                         * some time for computing a matched enveloppe rather
+                         * than relying on brute force rejection sampling.
+                         */
+                        const double a = physics->dis_dlQ2 / physics->dis_dlx;
+                        const double b = ly0 / physics->dis_dlx;
+                        double d = 0.;
+                        int i;
+                        for (i = 0; i <= iQ2max; i++) {
+                                int jmin = floor(a * i + b);
+                                if (jmin < 0)
+                                        jmin = 0;
+                                else if (jmin > DIS_X_N - 2)
+                                        jmin = DIS_X_N - 2;
+                                int j;
+                                for (j = jmin; j < DIS_X_N - 1; j++) {
+                                        const int k = i * (DIS_X_N - 1) + j;
+                                        const double delta = (k == 0) ?
+                                            cdf[k] :
+                                            cdf[k] - cdf[k - 1];
+                                        d += delta;
+                                }
+                        }
+
+                        iQ2 = ix = 0;
+                        r = d * context->random(context);
+                        d = 0.;
+                        for (i = 0; i <= iQ2max; i++) {
+                                int jmin = floor(a * i + b);
+                                if (jmin < 0)
+                                        jmin = 0;
+                                else if (jmin > DIS_X_N - 2)
+                                        jmin = DIS_X_N - 2;
+                                int j;
+                                for (j = jmin; j < DIS_X_N - 1; j++) {
+                                        const int k = i * (DIS_X_N - 1) + j;
+                                        const double delta = (k == 0) ?
+                                            cdf[k] :
+                                            cdf[k] - cdf[k - 1];
+                                        if (r <= d + delta) {
+                                                ix = j;
+                                                iQ2 = i;
+                                                goto cell_found;
+                                        }
+                                        d += delta;
+                                }
+                        }
+                cell_found:
+                        r -= d;
                 }
 
                 /* Sample over the cell. First sample over the marginal
