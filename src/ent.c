@@ -1242,6 +1242,8 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                  */
                 return ENT_RETURN_DOMAIN_ERROR;
         }
+        const double ly0 =
+            log(physics->dis_Q2min / (physics->dis_xmin * Q2max));
 
         double y = 0., Q2 = 0.;
         for (;;) {
@@ -1251,11 +1253,13 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                  * asymptotic pdf in (ln(x), ln(Q2)). First map the table's
                  * cell index (ix, iQ2) using a dichotomy.
                  */
-                int i0 = 0, i1 = iQ2max * (DIS_X_N - 1) - 1;
+                int ix, iQ2;
+                int i1 = iQ2max * (DIS_X_N - 1) - 1;
                 double r = cdf[i1] * context->random(context);
                 if (r <= cdf[0]) {
-                        i1 = 0;
+                        i1 = ix = iQ2 = 0;
                 } else {
+                        int i0 = 0;
                         while (i1 - i0 > 1) {
                                 int i2 = (i0 + i1) / 2;
                                 if (r > cdf[i2])
@@ -1263,10 +1267,13 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                                 else
                                         i1 = i2;
                         }
+                        ix = i1 % (DIS_X_N - 1);
+                        iQ2 = i1 / (DIS_X_N - 1);
+                        const double ly = ly0 + iQ2 * physics->dis_dlQ2 -
+                            (ix + 1) * physics->dis_dlx;
+                        if (ly >= 0.) continue;
                         r -= cdf[i0];
                 }
-                int ix = i1 % (DIS_X_N - 1);
-                const int iQ2 = i1 / (DIS_X_N - 1);
 
                 /* Sample over the cell. First sample over the marginal
                  * CDF for x, given the bilinear model.
