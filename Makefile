@@ -1,4 +1,4 @@
-CFLAGS := -O0 -g -std=c99 -pedantic -fPIC -Wall
+CFLAGS := -O2 -std=c99 -pedantic -fPIC -Wall
 INCLUDE := -Iinclude
 LIBS := -lm
 

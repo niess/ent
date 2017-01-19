@@ -36,7 +36,7 @@ int main()
         ent_physics_create(&physics, "data/pdf/CT14nnlo_0000.dat");
 
         /* Compute the DCS. */
-        double energy = 1E+05;
+        double energy = 1E+12;
         const double ymin = 1E-07;
         const double xmin = 1E-12;
         const int ny = 141;

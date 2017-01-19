@@ -115,8 +115,6 @@ struct ent_physics {
         double * cs;
         /* Entry point for the probability density function for DIS. */
         double * dis_pdf;
-        /* Extrpolation exponent for the DIS PDF. */
-        double * dis_lambda;
         /* Entry point for the cumulative density function for DIS. */
         double * dis_cdf;
         /* Sampling factors for x, in DIS. */
@@ -144,15 +142,14 @@ static int memory_padded_size(int size, int pad_size)
 static void * physics_create(int extra_size)
 {
         void * v = malloc(sizeof(struct ent_physics) + extra_size +
-            ((PROGET_N - 1) * ENERGY_N + 8 * DIS_Q2_N * (DIS_X_N + 1) +
-                8 * (DIS_Q2_N - 1) * DIS_X_N) *
+            ((PROGET_N - 1) * ENERGY_N + 8 * DIS_Q2_N * DIS_X_N +
+                8 * (DIS_Q2_N - 1) * (DIS_X_N - 1)) *
                 sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
         p->cs = (double *)(p->data + extra_size);
         p->dis_pdf = p->cs + (PROGET_N - 1) * ENERGY_N;
-        p->dis_lambda = p->dis_pdf + 8 * DIS_Q2_N * DIS_X_N;
-        p->dis_cdf = p->dis_lambda + 8 * DIS_Q2_N;
+        p->dis_cdf = p->dis_pdf + 8 * DIS_Q2_N * DIS_X_N;
         return v;
 }
 
@@ -878,8 +875,8 @@ static void physics_tabulate_dis(struct ent_physics * physics)
          * on (x, Q2) and it provides a majoration of the true DIS PDF.
          */
         const int nf = physics->pdf->nf;
-        const double c = (ENT_PHYS_GF * ENT_PHYS_HBC) *
-            (ENT_PHYS_GF * ENT_PHYS_HBC) / M_PI;
+        const double c =
+            (ENT_PHYS_GF * ENT_PHYS_HBC) * (ENT_PHYS_GF * ENT_PHYS_HBC) / M_PI;
         const double MZ2 = ENT_MASS_Z * ENT_MASS_Z;
         const double MW2 = ENT_MASS_W * ENT_MASS_W;
         double * pdf = physics->dis_pdf;
@@ -954,52 +951,25 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                                         const double F4 = (gpm2 + gpp2) *
                                             (Z * dbar + N * ubar + sbar + bbar);
 
-                                        factor = 0.25 * (F1 + F2 + F3 + F4) * rZ;
+                                        factor =
+                                            0.25 * (F1 + F2 + F3 + F4) * rZ;
                                 }
                                 pdf[k * DIS_X_N * DIS_Q2_N] = c * factor * Q2;
                         }
                 }
         }
 
+        const double c2 = 0.25 * physics->dis_dlQ2 * physics->dis_dlx;
         int proget;
         for (proget = 0; proget < 8; proget++) {
-                /* Below xmin, the asymptotic PDF is modelled as x**lambda(Q2).
-                 * Let's tabulate the lamba values.
-                 */
-                pdf = physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
-                double * lambda = physics->dis_lambda + proget * DIS_Q2_N;
-                for (iQ2 = 0; iQ2 < DIS_Q2_N; iQ2++, lambda++) {
-                        const double f0 = pdf[iQ2 * DIS_X_N];
-                        const double f1 = pdf[iQ2 * DIS_X_N + 1];
-                        if ((f0 > 0.) && (f1 > 0.))
-                                *lambda = log(f0 / f1) / physics->dis_dlx;
-                        else
-                                *lambda = 0.;
-                }
-
                 /* Compute the corresponding CDF using a bilinear
                  * interpolation.
                  */
-                lambda = physics->dis_lambda + proget * DIS_Q2_N;
+                pdf = physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
                 double * cdf =
-                    physics->dis_cdf + proget * (DIS_Q2_N - 1) * DIS_X_N;
+                    physics->dis_cdf + proget * (DIS_Q2_N - 1) * (DIS_X_N - 1);
                 double cdf0 = 0.;
-                for (iQ2 = 0; iQ2 < DIS_Q2_N - 1; iQ2++, cdf++) {
-                        /* First bin is for x <= xmin. Let's use the
-                         * extrapolation model.
-                         */
-                        const double f0 =
-                            pdf[iQ2 * DIS_X_N] / (1. - lambda[iQ2]);
-                        const double f1 =
-                            pdf[(iQ2 + 1) * DIS_X_N] / (1. - lambda[iQ2 + 1]);
-                        cdf[0] = cdf0 + 0.5 * physics->dis_dlQ2 * (f0 + f1);
-
-                        /* DEBUG */
-                        cdf[0] = cdf0;
-
-                        /* Update the CDF for bins with x > xmin. */
-                        const double c =
-                            0.25 * physics->dis_dlQ2 * physics->dis_dlx;
+                for (iQ2 = 0; iQ2 < DIS_Q2_N - 1; iQ2++) {
                         int ix;
                         for (ix = 0; ix < DIS_X_N - 1; ix++, cdf++) {
                                 const double f00 = pdf[iQ2 * DIS_X_N + ix];
@@ -1008,9 +978,9 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                                     pdf[(iQ2 + 1) * DIS_X_N + ix];
                                 const double f11 =
                                     pdf[(iQ2 + 1) * DIS_X_N + ix + 1];
-                                cdf[1] = cdf[0] + c * (f00 + f01 + f10 + f11);
+                                cdf0 += c2 * (f00 + f01 + f10 + f11);
+                                *cdf = cdf0;
                         }
-                        cdf0 = cdf[0];
                 }
         }
 }
@@ -1258,14 +1228,14 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
         /* Unpack the tables, ect ... */
         const double * const pdf =
             physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
-        const double * const lambda = physics->dis_lambda + proget * DIS_Q2_N;
         const double * const cdf =
-            physics->dis_cdf + proget * (DIS_Q2_N - 1) * DIS_X_N;
+            physics->dis_cdf + proget * (DIS_Q2_N - 1) * (DIS_X_N - 1);
         const double Q2max = 2. * ENT_MASS_NUCLEON * neutrino->energy;
         int iQ2max = ceil(log(Q2max / physics->dis_Q2min) / physics->dis_dlQ2);
         if (iQ2max >= DIS_Q2_N)
                 iQ2max = DIS_Q2_N - 1;
-        else if (iQ2max == 0) iQ2max = 1;
+        else if (iQ2max == 0)
+                iQ2max = 1;
         else if (iQ2max < 0) {
                 /* This should not occur since the total cross-section would
                  * be null in this case.
@@ -1281,77 +1251,57 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                  * asymptotic pdf in (ln(x), ln(Q2)). First map the table's
                  * cell index (ix, iQ2) using a dichotomy.
                  */
-                int i0 = 0, i1 = iQ2max * DIS_X_N - 1;
+                int i0 = 0, i1 = iQ2max * (DIS_X_N - 1) - 1;
                 double r = cdf[i1] * context->random(context);
-                while (i1 - i0 > 1) {
-                        int i2 = (i0 + i1) / 2;
-                        if (r > cdf[i2])
-                                i0 = i2;
-                        else
-                                i1 = i2;
-                }
-                int ix = i0 % DIS_X_N;
-                const int iQ2 = i0 / DIS_X_N;
-                r -= cdf[i0];
-
-                if (ix == 0) {
-                        /* The sampled x value is below the smallest tabulated
-                         * value, xmin. A power law model is assumed for the
-                         * PDF. First let's sample Q2 over its marginal CDF.
-                         */
-                        const double lambda0 = lambda[iQ2];
-                        const double lambda1 = lambda[iQ2 + 1];
-                        const double f0 = pdf[iQ2 * DIS_X_N] / (1. - lambda0);
-                        const double f1 =
-                            pdf[(iQ2 + 1) * DIS_X_N] / (1. - lambda1);
-                        const double ay = f1 - f0;
-                        const double by = f0;
-                        const double cy = -2. * r / physics->dis_dlQ2;
-                        const double dy = sqrt(by * by - ay * cy);
-                        const double hy = (dy - by) / ay;
-                        Q2 = physics->dis_Q2min *
-                            exp((iQ2 + hy) * physics->dis_dlQ2);
-
-                        /* Then, let's sample x over its conditional PDF. */
-                        const double r =
-                            (1. - hy) * f0 / ((1. - hy) * f0 + hy * f1);
-                        double lambda =
-                            (context->random(context) <= r) ? lambda0 : lambda1;
-                        x = physics->dis_xmin *
-                            pow(context->random(context), 1. / (1. - lambda));
-
-                        /* DEBUG */
-                        x = 0.;
+                if (r <= cdf[0]) {
+                        i1 = 0;
                 } else {
-                        /* Sample over the cell. First sample over the marginal
-                         * CDF for x, given the bilinear model.
-                         */
-                        ix--;
-                        const double f00 = pdf[iQ2 * DIS_X_N + ix];
-                        const double f01 = pdf[iQ2 * DIS_X_N + ix + 1];
-                        const double f10 = pdf[(iQ2 + 1) * DIS_X_N + ix];
-                        const double f11 = pdf[(iQ2 + 1) * DIS_X_N + ix + 1];
-                        const double ax = f10 + f11 - f00 - f01;
-                        const double bx = f00 + f01;
-                        const double cx =
-                            -4. * r / (physics->dis_dlQ2 * physics->dis_dlx);
-                        const double dx = sqrt(bx * bx - ax * cx);
-                        const double hx = (dx - bx) / ax;
-                        x = physics->dis_xmin *
-                            exp((ix + hx) * physics->dis_dlx);
-
-                        /* Then sample over the conditional CDF for Q2. */
-                        const double f0 = f00 * (1. - hx) + f10 * hx;
-                        const double f1 = f01 * (1. - hx) + f11 * hx;
-                        const double ay = f1 - f0;
-                        const double by = f0;
-                        const double cy = -context->random(context) * (f0 + f1);
-                        const double dy = sqrt(by * by - ay * cy);
-                        const double hy = (dy - by) / ay;
-                        Q2 = physics->dis_Q2min *
-                            exp((iQ2 + hy) * physics->dis_dlQ2);
+                        while (i1 - i0 > 1) {
+                                int i2 = (i0 + i1) / 2;
+                                if (r > cdf[i2])
+                                        i0 = i2;
+                                else
+                                        i1 = i2;
+                        }
+                        r -= cdf[i0];
                 }
-                if ((x <= 0.) || (Q2 >= Q2max)) continue;
+                int ix = i1 % (DIS_X_N - 1);
+                const int iQ2 = i1 / (DIS_X_N - 1);
+
+                /* Sample over the cell. First sample over the marginal
+                 * CDF for x, given the bilinear model.
+                 */
+                const double f00 = pdf[iQ2 * DIS_X_N + ix];
+                const double f01 = pdf[iQ2 * DIS_X_N + ix + 1];
+                const double f10 = pdf[(iQ2 + 1) * DIS_X_N + ix];
+                const double f11 = pdf[(iQ2 + 1) * DIS_X_N + ix + 1];
+                const double ax = f10 + f11 - f00 - f01;
+                const double bx = f00 + f01;
+                const double cx =
+                    -4. * r / (physics->dis_dlQ2 * physics->dis_dlx);
+                double dx = bx * bx - ax * cx;
+                if (dx < 0.)
+                        dx = 0.;
+                else
+                        dx = sqrt(dx);
+                const double hx = (dx - bx) / ax;
+                x = physics->dis_xmin * exp((ix + hx) * physics->dis_dlx);
+                if (x <= 0.) continue;
+
+                /* Then sample over the conditional CDF for Q2. */
+                const double f0 = f00 * (1. - hx) + f10 * hx;
+                const double f1 = f01 * (1. - hx) + f11 * hx;
+                const double ay = f1 - f0;
+                const double by = f0;
+                const double cy = -context->random(context) * (f0 + f1);
+                double dy = by * by - ay * cy;
+                if (dy < 0.)
+                        dy = 0.;
+                else
+                        dy = sqrt(dy);
+                const double hy = (dy - by) / ay;
+                Q2 = physics->dis_Q2min * exp((iQ2 + hy) * physics->dis_dlQ2);
+                if (Q2 >= Q2max) continue;
 
                 /* Reject the sampled value if it violates the kinematic
                  * limit.
