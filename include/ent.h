@@ -248,8 +248,6 @@ struct ent_context {
         ent_random_cb * random;
         /** A flag to switch between forward and backward Monte-Carlo. */
         int forward;
-        /** A user supplied energy limit for the transport, or `0`. */
-        double energy_limit;
         /** A user supplied distance limit for the transport, or `0`. */
         double distance_max;
         /** A user supplied grammage limit for the transport, or `0`. */

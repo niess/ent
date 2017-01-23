@@ -51,7 +51,7 @@ int main()
         ent_physics_create(&physics, "data/pdf/CT14nnlo_0000.dat");
 
         /* Instanciate a new simulation context. */
-        struct ent_context context = { &medium, &random, 1, 0., 6400E+03, 0. };
+        struct ent_context context = { &medium, &random, 1, 6400E+03, 0. };
 
         /* Run a Monte-Carlo transport. */
         struct ent_state neutrino = { ENT_PID_NU_TAU, 1E+09, 0., 0., 1.,
