@@ -193,9 +193,9 @@ typedef double ent_density_cb(
  * The user might implement his own data structure on top of it.
  */
 struct ent_medium {
-        /** The medium's material charge number. */
+        /** The effective charge number of the medium's material. */
         double Z;
-        /** The medium's material mass number. */
+        /** The effective mass number of the medium's material. */
         double A;
         /** The medium density callback. */
         ent_density_cb * density;

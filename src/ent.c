@@ -1623,8 +1623,6 @@ static enum ent_return transport_vertex(struct ent_physics * physics,
     struct ent_context * context, int proget, struct ent_state * neutrino,
     struct ent_state * product)
 {
-        /* TODO: backward sampling. */
-
         /* Process the corresponding vertex. */
         if (proget <= PROGET_NC_NU_BAR_PROTON) {
                 double y, Q2;
@@ -1814,30 +1812,57 @@ static enum ent_return transport_vertex(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
+/* Low level routine for computing a specific cross-section by interpolation
+ * or extrapolation.
+ */
+static double cross_section_compute(
+    int mode, int proget, double * cs0, double * cs1, double p1, double p2)
+{
+        if (mode == 0) {
+                /* interpolation case. */
+                return cs0[proget] * (1. - p1) + cs1[proget] * p1;
+        } else {
+                /* Extrapolation case. */
+                const double a = log(cs1[proget] / cs0[proget]) * p1;
+                return cs0[proget] * pow(p2, a);
+        }
+}
+
 /* Compute the tranport cross-sections for a given projectile and
  * medium. */
 static enum ent_return transport_cross_section(struct ent_physics * physics,
     enum ent_pid projectile, double energy, double Z, double A, double * cs)
 {
-        /* Build the interpolation factors. */
-        int i0, i1;
-        double h;
+        /* Build the interpolation or extrapolation factors. */
+        int mode;
+        double *cs0, *cs1;
+        double p1, p2;
         if (energy < ENERGY_MIN) {
-                i0 = i1 = 0.;
-                h = 0.;
+                /* Log extrapolation model below Emin. */
+                mode = 1;
+                cs0 = physics->cs;
+                cs1 = physics->cs + PROGET_N - 1;
+                p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
+                p2 = energy / ENERGY_MIN;
         } else if (energy >= ENERGY_MAX) {
-                i0 = i1 = ENERGY_N - 1;
-                h = 1.;
+                /* Log extrapolation model above Emax. */
+                mode = 1;
+                cs0 = physics->cs + (ENERGY_N - 2) * (PROGET_N - 1);
+                cs1 = physics->cs + (ENERGY_N - 1) * (PROGET_N - 1);
+                p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
+                p2 = energy / ENERGY_MIN;
         } else {
+                /* Interpolation model. */
+                mode = 0;
                 const double dle =
                     log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
-                h = log(energy / ENERGY_MIN) / dle;
-                i0 = (int)h;
-                i1 = i0 + 1;
-                h -= i0;
+                p1 = log(energy / ENERGY_MIN) / dle;
+                const int i0 = (int)p1;
+                p1 -= i0;
+                cs0 = physics->cs + i0 * (PROGET_N - 1);
+                cs1 = physics->cs + (i0 + 1) * (PROGET_N - 1);
+                p2 = 0.;
         }
-        const double * const cs0 = physics->cs + i0 * (PROGET_N - 1);
-        const double * const cs1 = physics->cs + i1 * (PROGET_N - 1);
 
         /* Build the table of cumulative cross-section values. */
         double N0, N1, Z0, Z1;
@@ -1852,43 +1877,51 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
                 N0 = 0.;
                 N1 = A - Z;
         }
-        cs[0] = N0 * (cs0[0] * (1. - h) + cs1[0] * h);
-        cs[1] = cs[0] + N0 * (cs0[1] * (1. - h) + cs1[1] * h);
-        cs[2] = cs[1] + N1 * (cs0[2] * (1. - h) + cs1[2] * h);
-        cs[3] = cs[2] + N1 * (cs0[3] * (1. - h) + cs1[3] * h);
-        cs[4] = cs[3] + Z0 * (cs0[4] * (1. - h) + cs1[4] * h);
-        cs[5] = cs[4] + Z0 * (cs0[5] * (1. - h) + cs1[5] * h);
-        cs[6] = cs[5] + Z1 * (cs0[6] * (1. - h) + cs1[6] * h);
-        cs[7] = cs[6] + Z1 * (cs0[7] * (1. - h) + cs1[7] * h);
+        cs[0] = N0 * cross_section_compute(mode, 0, cs0, cs1, p1, p2);
+        cs[1] = cs[0] + N0 * cross_section_compute(mode, 1, cs0, cs1, p1, p2);
+        cs[2] = cs[1] + N1 * cross_section_compute(mode, 2, cs0, cs1, p1, p2);
+        cs[3] = cs[2] + N1 * cross_section_compute(mode, 3, cs0, cs1, p1, p2);
+        cs[4] = cs[3] + Z0 * cross_section_compute(mode, 4, cs0, cs1, p1, p2);
+        cs[5] = cs[4] + Z0 * cross_section_compute(mode, 5, cs0, cs1, p1, p2);
+        cs[6] = cs[5] + Z1 * cross_section_compute(mode, 6, cs0, cs1, p1, p2);
+        cs[7] = cs[6] + Z1 * cross_section_compute(mode, 7, cs0, cs1, p1, p2);
         if (projectile == ENT_PID_NU_E)
-                cs[8] = cs[7] + Z * (cs0[8] * (1. - h) + cs1[8] * h);
+                cs[8] = cs[7] +
+                    Z * cross_section_compute(mode, 8, cs0, cs1, p1, p2);
         else
                 cs[8] = cs[7];
         if (projectile == ENT_PID_NU_BAR_E)
-                cs[9] = cs[8] + Z * (cs0[9] * (1. - h) + cs1[9] * h);
+                cs[9] = cs[8] +
+                    Z * cross_section_compute(mode, 9, cs0, cs1, p1, p2);
         else
                 cs[9] = cs[8];
         if ((projectile == ENT_PID_NU_MU) || (projectile == ENT_PID_NU_TAU))
-                cs[10] = cs[9] + Z * (cs0[10] * (1. - h) + cs1[10] * h);
+                cs[10] = cs[9] +
+                    Z * cross_section_compute(mode, 10, cs0, cs1, p1, p2);
         else
                 cs[10] = cs[9];
         if ((projectile == ENT_PID_NU_BAR_MU) ||
             (projectile == ENT_PID_NU_BAR_TAU))
-                cs[11] = cs[10] + Z * (cs0[11] * (1. - h) + cs1[11] * h);
+                cs[11] = cs[10] +
+                    Z * cross_section_compute(mode, 11, cs0, cs1, p1, p2);
         else
                 cs[11] = cs[10];
         if (projectile == ENT_PID_NU_MU)
-                cs[12] = cs[11] + Z * (cs0[12] * (1. - h) + cs1[12] * h);
+                cs[12] = cs[11] +
+                    Z * cross_section_compute(mode, 12, cs0, cs1, p1, p2);
         else
                 cs[12] = cs[11];
         if (projectile == ENT_PID_NU_TAU)
-                cs[13] = cs[12] + Z * (cs0[13] * (1. - h) + cs1[13] * h);
+                cs[13] =
+                    cs[12] + cross_section_compute(mode, 13, cs0, cs1, p1, p2);
         else
                 cs[13] = cs[12];
         if (projectile == ENT_PID_NU_BAR_E) {
-                const double d = Z * (cs0[14] * (1. - h) + cs1[14] * h);
+                const double d =
+                    Z * cross_section_compute(mode, 14, cs0, cs1, p1, p2);
                 cs[14] = cs[13] + d;
-                cs[15] = cs[14] + Z * (cs0[15] * (1. - h) + cs1[15] * h);
+                cs[15] = cs[14] +
+                    Z * cross_section_compute(mode, 15, cs0, cs1, p1, p2);
                 cs[16] = cs[15] + d * (ENT_WIDTH_W / ENT_WIDTH_W_TO_MUON - 1.);
         } else {
                 cs[14] = cs[13];
@@ -1913,8 +1946,6 @@ enum ent_return ent_vertex(struct ent_physics * physics,
         if ((physics == NULL) || (context == NULL) ||
             (context->random == NULL) || (neutrino == NULL))
                 ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
-
-        /* TODO: backward case. */
 
         /* Compute the process-target index. */
         const int pid = neutrino->pid;
