@@ -42,8 +42,15 @@ static double random(struct ent_context * context)
         return rand() / (double)RAND_MAX;
 }
 
-int main()
+int main(int nargc, char * argv[])
 {
+        /* Parse the input arguments. */
+        double energy = (nargc > 1) ? atof(argv[1]) : 5.7E+06;
+        enum ent_pid projectile =
+            (nargc > 2) ? atoi(argv[2]) : ENT_PID_NU_BAR_E;
+        double depth = (nargc > 3) ? atof(argv[3]) : 6400E+03;
+        int events = (nargc > 4) ? atoi(argv[4]) : 10000;
+
         /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
 
@@ -51,14 +58,31 @@ int main()
         ent_physics_create(&physics, "data/pdf/CT14nnlo_0000.dat");
 
         /* Instanciate a new simulation context. */
-        struct ent_context context = { &medium, &random, 1, 6400E+03, 0. };
+        struct ent_context context = { &medium, &random, 1, depth };
 
-        /* Run a Monte-Carlo transport. */
-        struct ent_state neutrino = { ENT_PID_NU_TAU, 1E+09, 0., 0., 1.,
-                { 0., 0., 0. }, { 0., 0., 1. } };
-        struct ent_state product;
-        enum ent_event event;
-        ent_transport(physics, &context, &neutrino, &product, &event);
+        /* Run a batch of Monte-Carlo transports. */
+        FILE * stream = fopen("transport.dat", "w+");
+        int i;
+        for (i = 0; i < events; i++) {
+                struct ent_state neutrino = { projectile, energy, 0., 0., 1.,
+                        { 0., 0., 0. }, { 0., 0., 1. } };
+                enum ent_event event;
+                for (;;) {
+                        ent_transport(
+                            physics, &context, &neutrino, NULL, &event);
+                        if (neutrino.energy <= 0.) break;
+                        if (event == ENT_EVENT_LIMIT_DISTANCE) {
+                                fprintf(stream, "%3d %12.5lE\n", neutrino.pid,
+                                    neutrino.energy);
+                                break;
+                        }
+                        int aid = abs(neutrino.pid);
+                        if ((aid != ENT_PID_NU_E) && (aid != ENT_PID_NU_MU) &&
+                            (aid != ENT_PID_NU_TAU))
+                                break;
+                }
+        }
+        fclose(stream);
 
         /* Finalise and exit to the OS. */
         ent_physics_destroy(&physics);
