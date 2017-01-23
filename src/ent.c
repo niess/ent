@@ -859,7 +859,9 @@ static void physics_tabulate_cs(struct ent_physics * physics)
 static void physics_tabulate_dis(struct ent_physics * physics)
 {
         /* Compute the sampling factors. */
-        physics->dis_xmin = physics->pdf->x[0];
+        physics->dis_xmin = 1. / ENERGY_MAX;
+        if (physics->dis_xmin > physics->pdf->x[0])
+                physics->dis_xmin = physics->pdf->x[0];
         physics->dis_dlx =
             log(physics->pdf->x[physics->pdf->nx - 1] / physics->dis_xmin) /
             (DIS_X_N - 1);
@@ -897,7 +899,7 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                         int k;
                         double factor;
                         for (k = 0; k < 8; k++) {
-                                const int eps = (k / 2) % 2 ? 1 : -1;
+                                const int eps = (k / 2) % 2 ? -1 : 1;
                                 const double Z = (k / 4);
                                 const double N = 1. - Z;
                                 /* Compute the relevant structure functions. */
@@ -1226,9 +1228,10 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
     double * y_, double * Q2_)
 {
 /* Energy threshold between brute force rejection sampling or a
- * matched enveloppe.
+ * matched enveloppe. Caution : changing xmin has a strong impact on this
+ * optimisation.
  */
-#define DIS_BRUTE_FORCE_THRESHOLD 1E+07
+#define DIS_BRUTE_FORCE_THRESHOLD 1E+08
 
         /* Unpack the tables, ect ... */
         const double * const pdf =
@@ -1382,7 +1385,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                  * structure functions.
                  */
                 const int nf = physics->pdf->nf;
-                const int eps = (proget / 2) % 2 ? 1 : -1;
+                const int eps = (proget / 2) % 2 ? -1 : 1;
                 const double Z = (proget / 4);
                 const double N = 1. - Z;
                 float xfx[LHAPDF_NF_MAX];
@@ -1922,16 +1925,20 @@ enum ent_return ent_vertex(struct ent_physics * physics,
         int proget;
         if (process == ENT_PROCESS_DIS_CC) {
                 if (target == ENT_PID_NEUTRON)
-                        proget = PROGET_CC_NU_NEUTRON;
+                        proget = (pid > 0) ? PROGET_CC_NU_NEUTRON :
+                                             PROGET_CC_NU_BAR_NEUTRON;
                 else if (target == ENT_PID_PROTON)
-                        proget = PROGET_CC_NU_PROTON;
+                        proget = (pid > 0) ? PROGET_CC_NU_PROTON :
+                                             PROGET_CC_NU_BAR_PROTON;
                 else
                         ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
         } else if (process == ENT_PROCESS_DIS_NC) {
                 if (target == ENT_PID_NEUTRON)
-                        proget = PROGET_NC_NU_NEUTRON;
+                        proget = (pid > 0) ? PROGET_NC_NU_NEUTRON :
+                                             PROGET_NC_NU_BAR_NEUTRON;
                 else if (target == ENT_PID_PROTON)
-                        proget = PROGET_NC_NU_PROTON;
+                        proget = (pid > 0) ? PROGET_NC_NU_PROTON :
+                                             PROGET_NC_NU_BAR_PROTON;
                 else
                         ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
         } else {
