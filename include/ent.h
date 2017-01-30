@@ -311,6 +311,30 @@ enum ent_return ent_physics_create(
 void ent_physics_destroy(struct ent_physics ** physics);
 
 /**
+ * The total coss-section.
+ *
+ * @param physics          A handle for the Physics.
+ * @param projectile       The incoming projectile.
+ * @param energy           The projectile total energy.
+ * @param Z                The target charge number.
+ * @param A                The target atomic mass number.
+ * @param process          The interaction process.
+ * @param cross_section    The coresponding DCS value.
+ * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+ * code is returned as detailed below.
+ *
+ * Compute the total cross-secction for the given projectile incoming on a
+ * target (Z, A).
+ *
+ * __Error codes__
+ *
+ *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is invalid.
+ */
+enum ent_return ent_physics_cross_section(struct ent_physics * physics,
+    enum ent_pid projectile, double energy, double Z, double A,
+    enum ent_process process, double * cross_section);
+
+/**
  * Compute a DCS.
  *
  * @param physics       A handle for the Physics.

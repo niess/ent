@@ -30,12 +30,12 @@ static double random(struct ent_context * context)
 int main(int nargc, char * argv[])
 {
         /* Parse the input arguments. */
-        double energy = (nargc > 1) ? atof(argv[1]) : 1E+12;
+        double energy = (nargc > 1) ? atof(argv[1]) : 1E+03;
         enum ent_pid projectile = (nargc > 2) ? atoi(argv[2]) : ENT_PID_NU_TAU;
         enum ent_process process =
             (nargc > 3) ? atoi(argv[3]) : ENT_PROCESS_DIS_CC;
         enum ent_pid target = (nargc > 4) ? atoi(argv[4]) : ENT_PID_PROTON;
-        int events = (nargc > 5) ? atoi(argv[5]) : 100000;
+        int events = (nargc > 5) ? atoi(argv[5]) : 1000000;
 
         /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);

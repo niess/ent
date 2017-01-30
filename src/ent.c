@@ -175,6 +175,7 @@ const char * ent_error_function(ent_function_t * caller)
 
         /* API functions with error codes. */
         REGISTER_FUNCTION(ent_physics_create);
+        REGISTER_FUNCTION(ent_physics_cross_section);
         REGISTER_FUNCTION(ent_physics_dcs);
         REGISTER_FUNCTION(ent_physics_pdf);
         REGISTER_FUNCTION(ent_vertex);
@@ -1022,6 +1023,173 @@ void ent_physics_destroy(struct ent_physics ** physics)
         *physics = NULL;
 }
 
+/* Compute the process-target index. */
+static enum ent_return proget_compute(enum ent_pid projectile,
+    enum ent_pid target, enum ent_process process, int * proget)
+{
+        *proget = -1;
+
+        const int apid = abs(projectile);
+        if ((apid != ENT_PID_NU_E) && (apid != ENT_PID_NU_MU) &&
+            (apid != ENT_PID_NU_TAU))
+                return ENT_RETURN_DOMAIN_ERROR;
+        if (process == ENT_PROCESS_DIS_CC) {
+                if (target == ENT_PID_NEUTRON)
+                        *proget = (projectile > 0) ? PROGET_CC_NU_NEUTRON :
+                                                     PROGET_CC_NU_BAR_NEUTRON;
+                else if (target == ENT_PID_PROTON)
+                        *proget = (projectile > 0) ? PROGET_CC_NU_PROTON :
+                                                     PROGET_CC_NU_BAR_PROTON;
+                else
+                        return ENT_RETURN_DOMAIN_ERROR;
+        } else if (process == ENT_PROCESS_DIS_NC) {
+                if (target == ENT_PID_NEUTRON)
+                        *proget = (projectile > 0) ? PROGET_NC_NU_NEUTRON :
+                                                     PROGET_NC_NU_BAR_NEUTRON;
+                else if (target == ENT_PID_PROTON)
+                        *proget = (projectile > 0) ? PROGET_NC_NU_PROTON :
+                                                     PROGET_NC_NU_BAR_PROTON;
+                else
+                        return ENT_RETURN_DOMAIN_ERROR;
+        } else {
+                if (target != ENT_PID_ELECTRON) return ENT_RETURN_DOMAIN_ERROR;
+                if (process == ENT_PROCESS_ELASTIC) {
+                        if (projectile == ENT_PID_NU_E)
+                                *proget = PROGET_ELASTIC_NU_E;
+                        else if (projectile == ENT_PID_NU_BAR_E)
+                                *proget = PROGET_ELASTIC_NU_BAR_E;
+                        else if ((projectile == ENT_PID_NU_MU) ||
+                            (projectile == ENT_PID_NU_TAU))
+                                *proget = PROGET_ELASTIC_NU_X;
+                        else
+                                *proget = PROGET_ELASTIC_NU_BAR_X;
+                } else if (process == ENT_PROCESS_INVERSE_MUON) {
+                        if (projectile == ENT_PID_NU_MU)
+                                *proget = PROGET_INVERSE_NU_MU_MU;
+                        else if (projectile == ENT_PID_NU_BAR_E)
+                                *proget = PROGET_INVERSE_NU_BAR_E_MU;
+                        else
+                                return ENT_RETURN_DOMAIN_ERROR;
+                } else if (process == ENT_PROCESS_INVERSE_TAU) {
+                        if (projectile == ENT_PID_NU_TAU)
+                                *proget = PROGET_INVERSE_NU_TAU_TAU;
+                        else if (projectile == ENT_PID_NU_BAR_E)
+                                *proget = PROGET_INVERSE_NU_BAR_E_TAU;
+                        else
+                                return ENT_RETURN_DOMAIN_ERROR;
+                } else if (process == ENT_PROCESS_GLASHOW_HADRON) {
+                        if (projectile == ENT_PID_NU_BAR_E)
+                                *proget = PROGET_GLASHOW_HADRONS;
+                        else
+                                return ENT_RETURN_DOMAIN_ERROR;
+                } else
+                        return ENT_RETURN_DOMAIN_ERROR;
+        }
+        return ENT_RETURN_SUCCESS;
+}
+
+/* Build the interpolation or extrapolation factors. */
+static int cross_section_prepare(struct ent_physics * physics, double energy,
+    double ** cs0, double ** cs1, double * p1, double * p2)
+{
+        int mode;
+        if (energy < ENERGY_MIN) {
+                /* Log extrapolation model below Emin. */
+                mode = 1;
+                *cs0 = physics->cs;
+                *cs1 = physics->cs + PROGET_N - 1;
+                *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
+                *p2 = energy / ENERGY_MIN;
+        } else if (energy >= ENERGY_MAX) {
+                /* Log extrapolation model above Emax. */
+                mode = 1;
+                *cs0 = physics->cs + (ENERGY_N - 2) * (PROGET_N - 1);
+                *cs1 = physics->cs + (ENERGY_N - 1) * (PROGET_N - 1);
+                *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
+                *p2 = energy / ENERGY_MIN;
+        } else {
+                /* Interpolation model. */
+                mode = 0;
+                const double dle =
+                    log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
+                *p1 = log(energy / ENERGY_MIN) / dle;
+                const int i0 = (int)(*p1);
+                *p1 -= i0;
+                *cs0 = physics->cs + i0 * (PROGET_N - 1);
+                *cs1 = physics->cs + (i0 + 1) * (PROGET_N - 1);
+                *p2 = 0.;
+        }
+        return mode;
+}
+
+/* Low level routine for computing a specific cross-section by interpolation
+ * or extrapolation.
+ */
+static double cross_section_compute(
+    int mode, int proget, double * cs0, double * cs1, double p1, double p2)
+{
+        if (mode == 0) {
+                /* interpolation case. */
+                return cs0[proget] * (1. - p1) + cs1[proget] * p1;
+        } else {
+                /* Extrapolation case. */
+                const double a = log(cs1[proget] / cs0[proget]) * p1;
+                return cs0[proget] * pow(p2, a);
+        }
+}
+
+/* Generic API function for accessing a specific total cross-section. */
+enum ent_return ent_physics_cross_section(struct ent_physics * physics,
+    enum ent_pid projectile, double energy, double Z, double A,
+    enum ent_process process, double * cross_section)
+{
+        ENT_ACKNOWLEDGE(ent_physics_cross_section);
+        *cross_section = 0.;
+
+        /* Build the interpolation or extrapolation factors. */
+        double *cs0, *cs1;
+        double p1, p2;
+        int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
+
+        /* Compute the relevant process-target indices. */
+        enum ent_return rc;
+        if ((process == ENT_PROCESS_DIS_CC) ||
+            (process == ENT_PROCESS_DIS_NC)) {
+                int proget;
+                if (Z > 0.) {
+                        if ((rc = proget_compute(projectile, ENT_PID_PROTON,
+                                 process, &proget)) != ENT_RETURN_SUCCESS)
+                                ENT_RETURN(rc);
+                        *cross_section += Z * cross_section_compute(mode,
+                                                  proget, cs0, cs1, p1, p2);
+                }
+                const double N = A - Z;
+                if (N > 0.) {
+                        if ((rc = proget_compute(projectile, ENT_PID_NEUTRON,
+                                 process, &proget)) != ENT_RETURN_SUCCESS)
+                                ENT_RETURN(rc);
+                        *cross_section += N * cross_section_compute(mode,
+                                                  proget, cs0, cs1, p1, p2);
+                }
+        } else {
+                int proget;
+                if ((rc = proget_compute(projectile, ENT_PID_ELECTRON, process,
+                         &proget)) != ENT_RETURN_SUCCESS)
+                        ENT_RETURN(rc);
+                if (proget < PROGET_N - 1) {
+                        *cross_section = Z * cross_section_compute(mode, proget,
+                                                 cs0, cs1, p1, p2);
+                } else {
+                        *cross_section = Z *
+                            cross_section_compute(mode, PROGET_N - 2, cs0, cs1,
+                                             p1, p2) *
+                            (ENT_WIDTH_W / ENT_WIDTH_W_TO_MUON - 1.);
+                }
+        }
+
+        return ENT_RETURN_SUCCESS;
+}
+
 /* Generic API function for computing DCSs. */
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_pid projectile, double energy, double Z, double A,
@@ -1812,57 +1980,15 @@ static enum ent_return transport_vertex(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
-/* Low level routine for computing a specific cross-section by interpolation
- * or extrapolation.
- */
-static double cross_section_compute(
-    int mode, int proget, double * cs0, double * cs1, double p1, double p2)
-{
-        if (mode == 0) {
-                /* interpolation case. */
-                return cs0[proget] * (1. - p1) + cs1[proget] * p1;
-        } else {
-                /* Extrapolation case. */
-                const double a = log(cs1[proget] / cs0[proget]) * p1;
-                return cs0[proget] * pow(p2, a);
-        }
-}
-
 /* Compute the tranport cross-sections for a given projectile and
  * medium. */
 static enum ent_return transport_cross_section(struct ent_physics * physics,
     enum ent_pid projectile, double energy, double Z, double A, double * cs)
 {
         /* Build the interpolation or extrapolation factors. */
-        int mode;
         double *cs0, *cs1;
         double p1, p2;
-        if (energy < ENERGY_MIN) {
-                /* Log extrapolation model below Emin. */
-                mode = 1;
-                cs0 = physics->cs;
-                cs1 = physics->cs + PROGET_N - 1;
-                p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
-                p2 = energy / ENERGY_MIN;
-        } else if (energy >= ENERGY_MAX) {
-                /* Log extrapolation model above Emax. */
-                mode = 1;
-                cs0 = physics->cs + (ENERGY_N - 2) * (PROGET_N - 1);
-                cs1 = physics->cs + (ENERGY_N - 1) * (PROGET_N - 1);
-                p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
-                p2 = energy / ENERGY_MIN;
-        } else {
-                /* Interpolation model. */
-                mode = 0;
-                const double dle =
-                    log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
-                p1 = log(energy / ENERGY_MIN) / dle;
-                const int i0 = (int)p1;
-                p1 -= i0;
-                cs0 = physics->cs + i0 * (PROGET_N - 1);
-                cs1 = physics->cs + (i0 + 1) * (PROGET_N - 1);
-                p2 = 0.;
-        }
+        int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
 
         /* Build the table of cumulative cross-section values. */
         double N0, N1, Z0, Z1;
@@ -1948,65 +2074,11 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                 ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
 
         /* Compute the process-target index. */
-        const int pid = neutrino->pid;
-        const int apid = abs(pid);
-        if ((apid != ENT_PID_NU_E) && (apid != ENT_PID_NU_MU) &&
-            (apid != ENT_PID_NU_TAU))
-                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
         int proget;
-        if (process == ENT_PROCESS_DIS_CC) {
-                if (target == ENT_PID_NEUTRON)
-                        proget = (pid > 0) ? PROGET_CC_NU_NEUTRON :
-                                             PROGET_CC_NU_BAR_NEUTRON;
-                else if (target == ENT_PID_PROTON)
-                        proget = (pid > 0) ? PROGET_CC_NU_PROTON :
-                                             PROGET_CC_NU_BAR_PROTON;
-                else
-                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
-        } else if (process == ENT_PROCESS_DIS_NC) {
-                if (target == ENT_PID_NEUTRON)
-                        proget = (pid > 0) ? PROGET_NC_NU_NEUTRON :
-                                             PROGET_NC_NU_BAR_NEUTRON;
-                else if (target == ENT_PID_PROTON)
-                        proget = (pid > 0) ? PROGET_NC_NU_PROTON :
-                                             PROGET_NC_NU_BAR_PROTON;
-                else
-                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
-        } else {
-                if (target != ENT_PID_ELECTRON)
-                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
-                if (process == ENT_PROCESS_ELASTIC) {
-                        if (pid == ENT_PID_NU_E)
-                                proget = PROGET_ELASTIC_NU_E;
-                        else if (pid == ENT_PID_NU_BAR_E)
-                                proget = PROGET_ELASTIC_NU_BAR_E;
-                        else if ((pid == ENT_PID_NU_MU) ||
-                            (pid == ENT_PID_NU_TAU))
-                                proget = PROGET_ELASTIC_NU_X;
-                        else
-                                proget = PROGET_ELASTIC_NU_BAR_X;
-                } else if (process == ENT_PROCESS_INVERSE_MUON) {
-                        if (pid == ENT_PID_NU_MU)
-                                proget = PROGET_INVERSE_NU_MU_MU;
-                        else if (pid == ENT_PID_NU_BAR_E)
-                                proget = PROGET_INVERSE_NU_BAR_E_MU;
-                        else
-                                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
-                } else if (process == ENT_PROCESS_INVERSE_TAU) {
-                        if (pid == ENT_PID_NU_TAU)
-                                proget = PROGET_INVERSE_NU_TAU_TAU;
-                        else if (pid == ENT_PID_NU_BAR_E)
-                                proget = PROGET_INVERSE_NU_BAR_E_TAU;
-                        else
-                                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
-                } else if (process == ENT_PROCESS_GLASHOW_HADRON) {
-                        if (pid == ENT_PID_NU_BAR_E)
-                                proget = PROGET_GLASHOW_HADRONS;
-                        else
-                                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
-                } else
-                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
-        }
+        enum ent_return rc;
+        if ((rc = proget_compute(neutrino->pid, target, process, &proget)) !=
+            ENT_RETURN_SUCCESS)
+                ENT_RETURN(rc);
 
         /* Process the vertex. */
         ENT_RETURN(

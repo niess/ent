@@ -1,4 +1,5 @@
 /* Standard library includes. */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -20,27 +21,34 @@ static void handle_error(enum ent_return rc, ent_function_t * caller)
         exit(EXIT_FAILURE);
 }
 
-int main()
+int main(int nargc, char * argv[])
 {
+        /* Parse the input arguments. */
+        enum ent_pid projectile = (nargc > 1) ? atoi(argv[1]) : ENT_PID_NU_TAU;
+        enum ent_process process =
+            (nargc > 2) ? atoi(argv[2]) : ENT_PROCESS_DIS_CC;
+        double Z = (nargc > 3) ? atof(argv[3]) : 0.5;
+        double A = (nargc > 4) ? atof(argv[4]) : 1.;
+
         /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
 
         /* Create a new Physics environment. */
         ent_physics_create(&physics, "data/pdf/CT14nnlo_0000.dat");
 
-        /* Test some DCS. */
-        const double energy = 1E+12;
-        const double x = 1E-02;
-        const double y = 1E-02;
-        double dcs;
-        ent_physics_dcs(physics, ENT_PID_NU_TAU, energy, 0.5, 1.,
-            ENT_PROCESS_DIS_CC, x, y, &dcs);
-        printf("DCS(%.5lE, %.5lE, %.5lE) = %.5lE\n", energy, x, y, dcs);
-
-        const double Q2 = energy * x * y * 0.931;
-        double pdf;
-        ent_physics_pdf(physics, ENT_PARTON_U, x, Q2, &pdf);
-        printf("x * PDF(%.5lE, %.5lE) = %.5lE\n", x, Q2, pdf * x);
+        /* Get the total cross-section. */
+        const double Emin = 1E+00;
+        const double Emax = 1E+12;
+        const int nE = 241;
+        const double lnE = log(Emax / Emin) / (nE - 1);
+        int i;
+        for (i = 0; i < nE; i++) {
+                const double energy = Emin * exp(i * lnE);
+                double cs;
+                ent_physics_cross_section(
+                    physics, projectile, energy, Z, A, process, &cs);
+                printf("%.5lE %.5lE\n", energy, cs);
+        }
 
         /* Finalise and exit to the OS. */
         ent_physics_destroy(&physics);
