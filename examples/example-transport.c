@@ -29,7 +29,8 @@ static double density(
 }
 
 /* Medium callback with a single infinite medium. */
-static double medium(struct ent_state * state, struct ent_medium ** medium)
+static double medium(struct ent_context * context, struct ent_state * state,
+    struct ent_medium ** medium)
 {
         static struct ent_medium medium_ = { 13., 26., &density };
         *medium = &medium_;

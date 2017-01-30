@@ -30,12 +30,13 @@ static double random(struct ent_context * context)
 int main(int nargc, char * argv[])
 {
         /* Parse the input arguments. */
-        double energy = (nargc > 1) ? atof(argv[1]) : 1E+03;
+        double energy = (nargc > 1) ? atof(argv[1]) : 1E+09;
         enum ent_pid projectile = (nargc > 2) ? atoi(argv[2]) : ENT_PID_NU_TAU;
         enum ent_process process =
             (nargc > 3) ? atoi(argv[3]) : ENT_PROCESS_DIS_CC;
-        enum ent_pid target = (nargc > 4) ? atoi(argv[4]) : ENT_PID_PROTON;
-        int events = (nargc > 5) ? atoi(argv[5]) : 1000000;
+        enum ent_pid Z = (nargc > 4) ? atof(argv[4]) : 0.5;
+        enum ent_pid A = (nargc > 5) ? atof(argv[5]) : 1.;
+        int events = (nargc > 6) ? atoi(argv[6]) : 1000000;
 
         /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
@@ -44,8 +45,6 @@ int main(int nargc, char * argv[])
         ent_physics_create(&physics, "data/pdf/CT14nnlo_0000.dat");
 
         /* Compute the DCS by numeric integration. */
-        const double Z = (target == ENT_PID_PROTON) ? 1. : 0.;
-        const double A = 1.;
         const double ymin = 1E-07;
         const double xmin = 1E-12;
         const int ny = 141;
@@ -75,8 +74,9 @@ int main(int nargc, char * argv[])
         }
         fclose(stream);
 
-        /* Instanciate a new simulation context. */
+        /* Instanciate a new simulation context and target medium. */
         struct ent_context context = { NULL, &random, 1 };
+        struct ent_medium medium = { Z, A };
 
         /* Run a batch of Monte-Carlo vertices. */
         stream = fopen("y.dat", "w+");
@@ -85,7 +85,7 @@ int main(int nargc, char * argv[])
                         { 0., 0., 0. }, { 0., 0., 1. } };
                 struct ent_state product;
                 ent_vertex(
-                    physics, &context, process, target, &neutrino, &product);
+                    physics, &context, &neutrino, &medium, process, &product);
                 if (process == ENT_PROCESS_DIS_CC)
                         fprintf(stream, "%12.5lE\n", neutrino.energy / energy);
                 else

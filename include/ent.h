@@ -79,11 +79,11 @@ enum ent_pid {
         ENT_PID_TAU = 15,
         /** The tau neutrino. */
         ENT_PID_NU_TAU = 16,
-        /* A generic hadronic product. */
+        /* An unspecified hadron. */
         ENT_PID_HADRON = 100,
-        /* A generic hadronic product. */
+        /* A neutron. */
         ENT_PID_NEUTRON = 2112,
-        /* A generic hadronic product. */
+        /* A proton. */
         ENT_PID_PROTON = 2212
 };
 
@@ -201,9 +201,11 @@ struct ent_medium {
         ent_density_cb * density;
 };
 
+struct ent_context;
 /**
  * Medium callback for a Monte-Carlo state.
  *
+ * @param context   The Monte-Carlo context requiring a medium.
  * @param state     The Monte-Carlo state for which the medium is requested.
  * @param medium    A pointer to the corresponding medium or `NULL` if the state
  * has exit the simulation area.
@@ -216,10 +218,9 @@ struct ent_medium {
  * **Warning** : it is an error to return zero or less for any state if the
  * extension is finite.
  */
-typedef double ent_medium_cb(
+typedef double ent_medium_cb(struct ent_context * context,
     struct ent_state * state, struct ent_medium ** medium);
 
-struct ent_context;
 /**
  * Callback providing a stream of pseudo random numbers.
  *
@@ -404,8 +405,9 @@ enum ent_event {
  * TODO: the documentation.
  */
 enum ent_return ent_vertex(struct ent_physics * physics,
-    struct ent_context * context, enum ent_process process, enum ent_pid target,
-    struct ent_state * neutrino, struct ent_state * product);
+    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_medium * medium, enum ent_process process,
+    struct ent_state * product);
 
 /**
  * Perform a Monte-Carlo neutrino transport.

@@ -1271,7 +1271,7 @@ static enum ent_return transport_step(struct ent_context * context,
 
         /* Check the new medium. */
         struct ent_medium * medium1;
-        double step1 = context->medium(state, &medium1);
+        double step1 = context->medium(context, state, &medium1);
         double ds_boundary = 0.;
         if (*medium == NULL) {
                 /* initialisation step. */
@@ -1295,7 +1295,7 @@ static enum ent_return transport_step(struct ent_context * context,
                             pi[1] + s3 * sgn * state->direction[1];
                         state->position[2] =
                             pi[2] + s3 * sgn * state->direction[2];
-                        step1 = context->medium(state, &medium1);
+                        step1 = context->medium(context, state, &medium1);
                         if (medium1 == *medium)
                                 s1 = s3;
                         else
@@ -2068,25 +2068,86 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
-/* API interface for an interaction vertex. */
+/* API interface for a Monte-Carlo interaction vertex. */
 enum ent_return ent_vertex(struct ent_physics * physics,
-    struct ent_context * context, enum ent_process process, enum ent_pid target,
-    struct ent_state * neutrino, struct ent_state * product)
+    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_medium * medium, enum ent_process process,
+    struct ent_state * product)
 {
         ENT_ACKNOWLEDGE(ent_vertex);
         if (product != NULL) product->pid = ENT_PID_NONE;
 
         /* Check and format the inputs. */
         if ((physics == NULL) || (context == NULL) ||
-            (context->random == NULL) || (neutrino == NULL))
+            (context->random == NULL) || (neutrino == NULL) || (medium == NULL))
                 ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
 
-        /* Compute the process-target index. */
+        /* Get the process and target index. */
         int proget;
-        enum ent_return rc;
-        if ((rc = proget_compute(neutrino->pid, target, process, &proget)) !=
-            ENT_RETURN_SUCCESS)
-                ENT_RETURN(rc);
+        if (process < 0) {
+                /* Randomise the process and the target if not specified.
+                 * First let's compute all the cross-sections.
+                 */
+                enum ent_return rc;
+                double cs[PROGET_N];
+                if ((rc = transport_cross_section(physics, neutrino->pid,
+                         neutrino->energy, medium->Z, medium->A, cs)) !=
+                    ENT_RETURN_SUCCESS)
+                        ENT_RETURN(rc);
+
+                /* Then, let us randomise the interaction process and its
+                 * corresponding target.
+                 */
+                const double r = cs[PROGET_N - 1] * context->random(context);
+                if (r < 0.) ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+                for (proget = 0; proget < PROGET_N; proget++)
+                        if (r <= cs[proget]) break;
+        } else if ((process == ENT_PROCESS_DIS_CC) ||
+            (process == ENT_PROCESS_DIS_NC)) {
+                /* This is a DIS event on a proton or neutron. Let's get the
+                 * corresponding indices.
+                 */
+                enum ent_return rc;
+                int proget_p, proget_n;
+                if ((rc = proget_compute(neutrino->pid, ENT_PID_PROTON, process,
+                         &proget_p)) != ENT_RETURN_SUCCESS)
+                        ENT_RETURN(rc);
+                if ((rc = proget_compute(neutrino->pid, ENT_PID_NEUTRON,
+                         process, &proget_n)) != ENT_RETURN_SUCCESS)
+                        ENT_RETURN(rc);
+
+                /* Then, let us build the interpolation or extrapolation
+                 * factors for the cross-sections.
+                 */
+                double *cs0, *cs1;
+                double p1, p2;
+                int mode = cross_section_prepare(
+                    physics, neutrino->energy, &cs0, &cs1, &p1, &p2);
+
+                /* Compute the relevant cross-sections and randomise the
+                 * target accordingly.
+                 */
+                const double cs_p = (medium->Z > 0.) ?
+                    medium->Z * cross_section_compute(
+                                    mode, proget_p, cs0, cs1, p1, p2) :
+                    0.;
+                const double N = medium->A - medium->Z;
+                const double cs_n = (N > 0.) ?
+                    N * cross_section_compute(
+                            mode, proget_n, cs0, cs1, p1, p2) :
+                    0.;
+                proget = (context->random(context) < cs_p / (cs_p + cs_n)) ?
+                    proget_p :
+                    proget_n;
+        } else {
+                /* This is an interaction with an atomic electron. Let's get
+                 * the corresponding index.
+                 */
+                enum ent_return rc;
+                if ((rc = proget_compute(neutrino->pid, ENT_PID_ELECTRON,
+                         process, &proget)) != ENT_RETURN_SUCCESS)
+                        ENT_RETURN(rc);
+        }
 
         /* Process the vertex. */
         ENT_RETURN(
