@@ -54,9 +54,9 @@
 #define ENT_PHYS_NA 6.022E+23
 
 /* Energy range for tabulations. */
-#define ENERGY_MIN 1E+03
+#define ENERGY_MIN 1E+02
 #define ENERGY_MAX 1E+12
-#define ENERGY_N 181
+#define ENERGY_N 201
 
 /* Sampling for the tabulations of DIS cumulative cross-sections. */
 #define DIS_Q2_N 100
@@ -781,10 +781,18 @@ static double dcs_integrate(struct ent_physics * physics,
         if ((process == ENT_PROCESS_DIS_CC) ||
             (process == ENT_PROCESS_DIS_NC)) {
                 /* Deep Inelastic Scattering requires a double integral. */
-                const double ymin = 1E-12;
-                const double xmin = 1E-12;
-                const int nx = 3;
-                const int ny = 3;
+                double xmin, ymin;
+                int nx, ny;
+                if (energy >= 1E+04) {
+                        nx = ny = 3;
+                        xmin = ymin = 1E-12;
+                } else {
+                        nx = ny = 6;
+                        xmin = 1. / energy;
+                        if (xmin > 1E-02) xmin = 1E-02;
+                        ymin = 1. / energy;
+                        if (ymin > 1E-04) ymin = 1E-04;
+                }
                 const double dlx = -log(xmin) / nx;
                 const double dly = -log(ymin) / ny;
                 double I = 0.;
