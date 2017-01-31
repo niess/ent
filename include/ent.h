@@ -172,7 +172,7 @@ struct ent_state;
  *
  * @param medium      A related `ent_medium` or `NULL`.
  * @param state       The state for which the _density_ is requested.
- * @param density     The corresponding density value in g/cm^3.
+ * @param density     The corresponding density value in kg/m^3.
  * @return A proposed step limit distance, in m.
  *
  * The callback must return a proposed Monte-Carlo stepping distance, in m,
