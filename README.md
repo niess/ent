@@ -1,5 +1,5 @@
 # ENT
-(an **E**ngine for **N**eutrinos **T**ransport)
+(an **E**ngine for high energy **N**eutrinos **T**ransport)
 
 ## Description
 
