@@ -1,0 +1,12 @@
+{
+ "name":   "ENT",
+ "github": "niess/ent",
+ "input":  "include",
+ "output": "docs",
+ "favicon": "../favicon.ico",
+ "logo": ["../images/ent-black.png", "../index.html"],
+ "prefix": "ent_",
+ "branch": "docs-pages",
+ "examples": "examples",
+ "legacy": {"input": {"include": ["v0.1"]}}
+}

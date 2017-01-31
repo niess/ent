@@ -79,11 +79,11 @@ enum ent_pid {
         ENT_PID_TAU = 15,
         /** The tau neutrino. */
         ENT_PID_NU_TAU = 16,
-        /* An unspecified hadron. */
+        /** An unspecified hadron. */
         ENT_PID_HADRON = 100,
-        /* A neutron. */
+        /** A neutron. */
         ENT_PID_NEUTRON = 2112,
-        /* A proton. */
+        /** A proton. */
         ENT_PID_PROTON = 2212
 };
 
