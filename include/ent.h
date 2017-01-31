@@ -1,6 +1,6 @@
 /*
- *  an Engine for Neutrinos Transport (ENT)
- *  Copyright (C) 2016  Valentin Niess
+ *  an Engine for high energy Neutrinos Transport (ENT)
+ *  Copyright (C) 2017  Valentin Niess
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -400,22 +400,53 @@ enum ent_event {
 };
 
 /**
- * Process a Monte-Carlo interaction vertex.
+ * Perform a Monte-Carlo interaction.
  *
- * TODO: the documentation.
+ * @param physics    A handle for the Physics.
+ * @param context    The Monte-Carlo simulation context.
+ * @param state      The initial / final state of the tracked particle.
+ * @param medium     The target medium.
+ * @param process    The interaction process, if specified.
+ * @param product    Any additional interaction product, or `NULL` if not
+ *                   required.
+ * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+ * code is returned as detailed below.
+ *
+ * Perform a Monte-Carlo interaction for the given projectile and target. If
+ * _process_ is negative the interaction process is randomly selected according
+ * to the cross-sections of all possible processes.
+ *
+ * __Error codes__
+ *
+ *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is inconsistent.
  */
 enum ent_return ent_vertex(struct ent_physics * physics,
-    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_context * context, struct ent_state * state,
     struct ent_medium * medium, enum ent_process process,
     struct ent_state * product);
 
 /**
- * Perform a Monte-Carlo neutrino transport.
+ * Perform a Monte-Carlo transport.
  *
- * TODO: the documentation.
+ * @param physics    A handle for the Physics.
+ * @param context    The Monte-Carlo simulation context.
+ * @param state      The initial / final state of the tracked particle.
+ * @param product    Any additional interaction product, or `NULL` if not
+ *                   required.
+ * @param event      The event that ended the Monte-Carlo transport.
+ * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+ * code is returned as detailed below.
+ *
+ * Transport the given particle in a medium. The Monte-Carlo transport ends
+ * whenever an interaction occurs, or a medium boundary is crossed, or a user
+ * specified limit is reached.
+ *
+ * __Error codes__
+ *
+ *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is inconsistent.
  */
 enum ent_return ent_transport(struct ent_physics * physics,
-    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_context * context, struct ent_state * state,
     struct ent_state * product, enum ent_event * event);
 
 /**

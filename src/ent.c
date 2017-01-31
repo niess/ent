@@ -1,6 +1,6 @@
 /*
- *  an Engine for Neutrinos Transport (ENT)
- *  Copyright (C) 2016  Valentin Niess
+ *  an Engine for high energy Neutrinos Transport (ENT)
+ *  Copyright (C) 2017  Valentin Niess
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -2070,7 +2070,7 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
 
 /* API interface for a Monte-Carlo interaction vertex. */
 enum ent_return ent_vertex(struct ent_physics * physics,
-    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_context * context, struct ent_state * state,
     struct ent_medium * medium, enum ent_process process,
     struct ent_state * product)
 {
@@ -2079,7 +2079,7 @@ enum ent_return ent_vertex(struct ent_physics * physics,
 
         /* Check and format the inputs. */
         if ((physics == NULL) || (context == NULL) ||
-            (context->random == NULL) || (neutrino == NULL) || (medium == NULL))
+            (context->random == NULL) || (state == NULL) || (medium == NULL))
                 ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
 
         /* Get the process and target index. */
@@ -2090,8 +2090,8 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                  */
                 enum ent_return rc;
                 double cs[PROGET_N];
-                if ((rc = transport_cross_section(physics, neutrino->pid,
-                         neutrino->energy, medium->Z, medium->A, cs)) !=
+                if ((rc = transport_cross_section(physics, state->pid,
+                         state->energy, medium->Z, medium->A, cs)) !=
                     ENT_RETURN_SUCCESS)
                         ENT_RETURN(rc);
 
@@ -2109,11 +2109,11 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                  */
                 enum ent_return rc;
                 int proget_p, proget_n;
-                if ((rc = proget_compute(neutrino->pid, ENT_PID_PROTON, process,
+                if ((rc = proget_compute(state->pid, ENT_PID_PROTON, process,
                          &proget_p)) != ENT_RETURN_SUCCESS)
                         ENT_RETURN(rc);
-                if ((rc = proget_compute(neutrino->pid, ENT_PID_NEUTRON,
-                         process, &proget_n)) != ENT_RETURN_SUCCESS)
+                if ((rc = proget_compute(state->pid, ENT_PID_NEUTRON, process,
+                         &proget_n)) != ENT_RETURN_SUCCESS)
                         ENT_RETURN(rc);
 
                 /* Then, let us build the interpolation or extrapolation
@@ -2122,7 +2122,7 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                 double *cs0, *cs1;
                 double p1, p2;
                 int mode = cross_section_prepare(
-                    physics, neutrino->energy, &cs0, &cs1, &p1, &p2);
+                    physics, state->energy, &cs0, &cs1, &p1, &p2);
 
                 /* Compute the relevant cross-sections and randomise the
                  * target accordingly.
@@ -2144,19 +2144,18 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                  * the corresponding index.
                  */
                 enum ent_return rc;
-                if ((rc = proget_compute(neutrino->pid, ENT_PID_ELECTRON,
-                         process, &proget)) != ENT_RETURN_SUCCESS)
+                if ((rc = proget_compute(state->pid, ENT_PID_ELECTRON, process,
+                         &proget)) != ENT_RETURN_SUCCESS)
                         ENT_RETURN(rc);
         }
 
         /* Process the vertex. */
-        ENT_RETURN(
-            transport_vertex(physics, context, proget, neutrino, product));
+        ENT_RETURN(transport_vertex(physics, context, proget, state, product));
 }
 
-/* API interface for the neutrino tranport. */
+/* API interface for a Monte-Carlo tranport. */
 enum ent_return ent_transport(struct ent_physics * physics,
-    struct ent_context * context, struct ent_state * neutrino,
+    struct ent_context * context, struct ent_state * state,
     struct ent_state * product, enum ent_event * event)
 {
         ENT_ACKNOWLEDGE(ent_transport);
@@ -2166,19 +2165,19 @@ enum ent_return ent_transport(struct ent_physics * physics,
         /* Check and format the inputs. */
         if ((physics == NULL) || (context == NULL) ||
             (context->medium == NULL) || (context->random == NULL) ||
-            (neutrino == NULL))
+            (state == NULL))
                 ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
 
         /* Check for an initial limit violation. */
         enum ent_return rc = ENT_RETURN_SUCCESS;
         enum ent_event event_ = ENT_EVENT_NONE;
         if ((context->distance_max > 0.) &&
-            (neutrino->distance >= context->distance_max)) {
+            (state->distance >= context->distance_max)) {
                 event_ = ENT_EVENT_LIMIT_DISTANCE;
                 goto exit;
         }
         if ((context->grammage_max > 0.) &&
-            (neutrino->grammage >= context->grammage_max)) {
+            (state->grammage >= context->grammage_max)) {
                 event_ = ENT_EVENT_LIMIT_GRAMMAGE;
                 goto exit;
         }
@@ -2186,23 +2185,22 @@ enum ent_return ent_transport(struct ent_physics * physics,
         /* Initialise the transport. */
         double step = 0., density;
         struct ent_medium * medium = NULL;
-        if ((rc = transport_step(context, neutrino, &medium, &step, &density,
+        if ((rc = transport_step(context, state, &medium, &step, &density,
                  context->grammage_max, &event_)) != ENT_RETURN_SUCCESS)
                 goto exit;
         if (event_ != ENT_EVENT_NONE) goto exit;
 
         /* Compute the cross-sections. */
         double cs[PROGET_N];
-        if ((rc = transport_cross_section(physics, neutrino->pid,
-                 neutrino->energy, medium->Z, medium->A, cs)) !=
-            ENT_RETURN_SUCCESS)
+        if ((rc = transport_cross_section(physics, state->pid, state->energy,
+                 medium->Z, medium->A, cs)) != ENT_RETURN_SUCCESS)
                 goto exit;
 
         /* Randomise the depth of the next interaction. */
         enum ent_event foreseen = ENT_EVENT_NONE;
         const double Xint =
             medium->A * 1E-03 / (cs[PROGET_N - 1] * ENT_PHYS_NA);
-        double Xlim = neutrino->grammage - Xint * log(context->random(context));
+        double Xlim = state->grammage - Xint * log(context->random(context));
         if (context->grammage_max && (context->grammage_max < Xlim)) {
                 Xlim = context->grammage_max;
                 foreseen = ENT_EVENT_LIMIT_GRAMMAGE;
@@ -2211,8 +2209,8 @@ enum ent_return ent_transport(struct ent_physics * physics,
         if (step)
                 for (;;) {
                         /* Step until an event occurs. */
-                        if ((rc = transport_step(context, neutrino, &medium,
-                                 &step, &density, Xlim, &event_)) !=
+                        if ((rc = transport_step(context, state, &medium, &step,
+                                 &density, Xlim, &event_)) !=
                             ENT_RETURN_SUCCESS)
                                 goto exit;
                         if (event_ != ENT_EVENT_NONE) break;
@@ -2222,7 +2220,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                  * extension.
                  * Let's do a single straight step.
                  */
-                event_ = transport_straight(context, neutrino, density, Xlim);
+                event_ = transport_straight(context, state, density, Xlim);
         }
 
         /* Process any interaction. */
@@ -2238,7 +2236,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                         for (proget = 0; proget < PROGET_N; proget++)
                                 if (r <= cs[proget]) break;
                         rc = transport_vertex(
-                            physics, context, proget, neutrino, product);
+                            physics, context, proget, state, product);
                 }
         }
 
