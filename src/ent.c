@@ -1295,11 +1295,17 @@ static enum ent_return transport_step(struct ent_context * context,
                             pi[1] + s3 * sgn * state->direction[1];
                         state->position[2] =
                             pi[2] + s3 * sgn * state->direction[2];
-                        step1 = context->medium(context, state, &medium1);
-                        if (medium1 == *medium)
+                        struct ent_medium * tmp_medium;
+                        const double tmp_step = context->medium(
+                            context, state, &tmp_medium);
+                        if (tmp_medium == *medium) {
                                 s1 = s3;
-                        else
+                        } else {
                                 s2 = s3;
+                                step1 = tmp_step;
+                                if (tmp_medium != medium1)
+                                        medium1 = tmp_medium;
+                        }
                 }
                 state->position[0] = pi[0] + s2 * sgn * state->direction[0];
                 state->position[1] = pi[1] + s2 * sgn * state->direction[1];
