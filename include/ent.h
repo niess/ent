@@ -428,7 +428,7 @@ enum ent_return ent_vertex(struct ent_physics * physics,
 /**
  * Perform a Monte-Carlo transport.
  *
- * @param physics    A handle for the Physics.
+ * @param physics    A handle for the Physics or `NULL`.
  * @param context    The Monte-Carlo simulation context.
  * @param state      The initial / final state of the tracked particle.
  * @param product    Any additional interaction product, or `NULL` if not
@@ -439,7 +439,8 @@ enum ent_return ent_vertex(struct ent_physics * physics,
  *
  * Transport the given particle in a medium. The Monte-Carlo transport ends
  * whenever an interaction occurs, or a medium boundary is crossed, or a user
- * specified limit is reached.
+ * specified limit is reached. Note that if *physics* is `NULL` neutrino
+ * interactions are disabled.
  *
  * __Error codes__
  *

@@ -1296,15 +1296,14 @@ static enum ent_return transport_step(struct ent_context * context,
                         state->position[2] =
                             pi[2] + s3 * sgn * state->direction[2];
                         struct ent_medium * tmp_medium;
-                        const double tmp_step = context->medium(
-                            context, state, &tmp_medium);
+                        const double tmp_step =
+                            context->medium(context, state, &tmp_medium);
                         if (tmp_medium == *medium) {
                                 s1 = s3;
                         } else {
                                 s2 = s3;
                                 step1 = tmp_step;
-                                if (tmp_medium != medium1)
-                                        medium1 = tmp_medium;
+                                if (tmp_medium != medium1) medium1 = tmp_medium;
                         }
                 }
                 state->position[0] = pi[0] + s2 * sgn * state->direction[0];
@@ -2169,9 +2168,8 @@ enum ent_return ent_transport(struct ent_physics * physics,
         *event = ENT_EVENT_NONE;
 
         /* Check and format the inputs. */
-        if ((physics == NULL) || (context == NULL) ||
-            (context->medium == NULL) || (context->random == NULL) ||
-            (state == NULL))
+        if ((context == NULL) || (context->medium == NULL) ||
+            (context->random == NULL) || (state == NULL))
                 ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
 
         /* Check for an initial limit violation. */
@@ -2196,22 +2194,32 @@ enum ent_return ent_transport(struct ent_physics * physics,
                 goto exit;
         if (event_ != ENT_EVENT_NONE) goto exit;
 
-        /* Compute the cross-sections. */
-        double cs[PROGET_N];
-        if ((rc = transport_cross_section(physics, state->pid, state->energy,
-                 medium->Z, medium->A, cs)) != ENT_RETURN_SUCCESS)
-                goto exit;
-
-        /* Randomise the depth of the next interaction. */
+        /* Set any grammage limit. */
         enum ent_event foreseen = ENT_EVENT_NONE;
-        const double Xint =
-            medium->A * 1E-03 / (cs[PROGET_N - 1] * ENT_PHYS_NA);
-        double Xlim = state->grammage - Xint * log(context->random(context));
-        if (context->grammage_max && (context->grammage_max < Xlim)) {
+        double cs[PROGET_N], Xlim = 0.;
+        if (physics != NULL) {
+                /* Compute the cross-sections. */
+                if ((rc = transport_cross_section(physics, state->pid,
+                         state->energy, medium->Z, medium->A, cs)) !=
+                    ENT_RETURN_SUCCESS)
+                        goto exit;
+
+                /* Randomise the depth of the next interaction. */
+                const double Xint =
+                    medium->A * 1E-03 / (cs[PROGET_N - 1] * ENT_PHYS_NA);
+                Xlim = state->grammage - Xint * log(context->random(context));
+
+                if ((context->grammage_max > 0.) &&
+                    (context->grammage_max < Xlim)) {
+                        Xlim = context->grammage_max;
+                        foreseen = ENT_EVENT_LIMIT_GRAMMAGE;
+                }
+        } else if (context->grammage_max > 0.) {
                 Xlim = context->grammage_max;
                 foreseen = ENT_EVENT_LIMIT_GRAMMAGE;
         }
 
+        /* Do the stepping. */
         if (step)
                 for (;;) {
                         /* Step until an event occurs. */
@@ -2222,8 +2230,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                         if (event_ != ENT_EVENT_NONE) break;
                 }
         else {
-                /* This is a uniform medium of infinite
-                 * extension.
+                /* This is a uniform medium of infinite extension.
                  * Let's do a single straight step.
                  */
                 event_ = transport_straight(context, state, density, Xlim);
