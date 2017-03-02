@@ -1299,9 +1299,9 @@ static enum ent_return transport_step(struct ent_context * context,
                         const double tmp_step =
                             context->medium(context, state, &tmp_medium);
                         if (tmp_medium == *medium) {
-                                s1 = s3;
-                        } else {
                                 s2 = s3;
+                        } else {
+                                s1 = s3;
                                 step1 = tmp_step;
                                 if (tmp_medium != medium1) medium1 = tmp_medium;
                         }
@@ -1314,13 +1314,10 @@ static enum ent_return transport_step(struct ent_context * context,
         }
 
         /* Get the end step local properties. */
-        double density1;
-        const double step2 = (*medium)->density(*medium, state, &density1);
-        if ((density1 < 0.) || ((*medium)->A <= 0.))
+        double density1, step2;
+        step2 = (*medium)->density(*medium, state, &density1);
+        if ((density1 <= 0.) || ((*medium)->A <= 0.))
                 return ENT_RETURN_DOMAIN_ERROR;
-        if (step2 > 0.) {
-                if ((step1 <= 0.) || (step2 < step1)) step1 = step2;
-        }
 
         /* Offset the end step position if a boundary crossing occured. */
         if (ds_boundary != 0.) {
@@ -1328,7 +1325,6 @@ static enum ent_return transport_step(struct ent_context * context,
                 state->position[1] += ds_boundary * sgn * state->direction[1];
                 state->position[2] += ds_boundary * sgn * state->direction[2];
                 *medium = medium1;
-                *step += ds_boundary;
 
                 /* Reset any distance limit if no more valid. */
                 if ((context->distance_max > 0.) &&
@@ -1366,7 +1362,15 @@ static enum ent_return transport_step(struct ent_context * context,
                 state->distance += *step;
         }
 
+        /* Update the end step density if a valid change of medium occured. */
+        if ((ds_boundary != 0.) && (*medium != NULL)) {
+                step2 = (*medium)->density(*medium, state, &density1);
+                if ((density1 <= 0.) || (medium1->A <= 0.))
+                        return ENT_RETURN_DOMAIN_ERROR;
+        }
+
         /* Update and return. */
+        if ((step2 > 0.) && ((step1 <= 0.) || (step2 < step1))) step1 = step2;
         *step = (step1 < 0) ? 0. : step1;
         *density = density1;
         return ENT_RETURN_SUCCESS;
@@ -2228,6 +2232,10 @@ enum ent_return ent_transport(struct ent_physics * physics,
                             ENT_RETURN_SUCCESS)
                                 goto exit;
                         if (event_ != ENT_EVENT_NONE) break;
+                        if ((medium != NULL) && (step == 0.)) {
+                                rc = ENT_RETURN_DOMAIN_ERROR;
+                                goto exit;
+                        }
                 }
         else {
                 /* This is a uniform medium of infinite extension.

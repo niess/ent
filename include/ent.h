@@ -216,7 +216,7 @@ struct ent_context;
  * signs that the corresponding medium has no boundaries.
  *
  * **Warning** : it is an error to return zero or less for any state if the
- * extension is finite.
+ * initial medium is finite, i.e. returns a stricly positive step value.
  */
 typedef double ent_medium_cb(struct ent_context * context,
     struct ent_state * state, struct ent_medium ** medium);
@@ -438,13 +438,14 @@ enum ent_return ent_vertex(struct ent_physics * physics,
  * code is returned as detailed below.
  *
  * Transport the given particle in a medium. The Monte-Carlo transport ends
- * whenever an interaction occurs, or a medium boundary is crossed, or a user
+ * whenever an interaction occurs, or the neutrino escapes, or a user
  * specified limit is reached. Note that if *physics* is `NULL` neutrino
  * interactions are disabled.
  *
  * __Error codes__
  *
- *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is inconsistent.
+ *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is inconsistent or an
+ *                                 inconsistent step value was returned.
  */
 enum ent_return ent_transport(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
