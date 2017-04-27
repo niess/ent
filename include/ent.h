@@ -447,7 +447,7 @@ enum ent_return ent_vertex(struct ent_physics * physics,
  * __Error codes__
  *
  *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is inconsistent or an
- *                                 inconsistent step value was returned.
+* inconsistent step value was returned.
  */
 enum ent_return ent_transport(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
