@@ -239,6 +239,19 @@ typedef double ent_medium_cb(struct ent_context * context,
 typedef double(ent_random_cb)(struct ent_context * context);
 
 /**
+ * Callback providing an a priori relative density of ancesters.
+ *
+ * @param context    The Monte-Carlo context requiring an ancester.
+ * @param ancester   The PID of the required ancester.
+ * @param daughter   The daughter state.
+ * @return The relative density of the ancester.
+ *
+ * TODO: document.
+ */
+typedef double(ent_ancester_cb)(struct ent_context * context,
+    enum ent_pid ancester, struct ent_state * daughter);
+
+/**
  * Data for a Monte-Carlo context.
  *
  * These are the data required by _ENT_ for describing a Monte-Carlo context.
@@ -249,8 +262,8 @@ struct ent_context {
         ent_medium_cb * medium;
         /** The random engine callback. */
         ent_random_cb * random;
-        /** A flag to switch between forward and backward Monte-Carlo. */
-        int forward;
+        /** The ancester callback, or `NULL` for forward Monte-Carlo. */
+        ent_ancester_cb * ancester;
         /** A user supplied distance limit for the transport, or `0`. */
         double distance_max;
         /** A user supplied grammage limit for the transport, or `0`. */
@@ -447,7 +460,7 @@ enum ent_return ent_vertex(struct ent_physics * physics,
  * __Error codes__
  *
  *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is inconsistent or an
-* inconsistent step value was returned.
+ * inconsistent step value was returned.
  */
 enum ent_return ent_transport(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,

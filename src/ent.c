@@ -1250,7 +1250,7 @@ static enum ent_return transport_step(struct ent_context * context,
 #define STEP_MIN 1E-06
 
         *event = ENT_EVENT_NONE;
-        const double sgn = context->forward ? 1. : -1.;
+        const double sgn = (context->ancester == NULL) ? 1. : -1.;
         if (*step > 0.) {
                 /* Apply any distance limit. */
                 if ((context->distance_max > 0.) &&
@@ -1399,7 +1399,7 @@ static enum ent_event transport_straight(struct ent_context * context,
         }
 
         /* Update the position. */
-        const double sgn = context->forward ? 1. : -1.;
+        const double sgn = (context->ancester == NULL) ? 1. : -1.;
         state->position[0] += sgn * state->direction[0] * ds;
         state->position[1] += sgn * state->direction[1] * ds;
         state->position[2] += sgn * state->direction[2] * ds;
@@ -2079,20 +2079,188 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
-/* API interface for a Monte-Carlo interaction vertex. */
-enum ent_return ent_vertex(struct ent_physics * physics,
+/* Randomise the ancester at a backward vertex. */
+static enum ent_return transport_ancester_draw(struct ent_physics * physics,
+    struct ent_context * context, struct ent_state * daughter,
+    struct ent_medium * medium, enum ent_pid * ancester,
+    enum proget_index * proget)
+{
+        /* Build the interpolation or extrapolation factors for cross-sections.
+         */
+        double *cs0, *cs1;
+        double p1, p2;
+        int mode = cross_section_prepare(
+            physics, daughter->energy, &cs0, &cs1, &p1, &p2);
+
+        /* Check the valid backward processes and compute their a priori
+         * probabilities of occurence.
+         */
+        int proget_v[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+        int ancester_v[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+        double p[8] = { 0., 0., 0., 0., 0., 0., 0., 0. };
+        int np = 0;
+
+        const double Z = medium->Z;
+        const double N = medium->A - Z;
+        int apid = abs(daughter->pid);
+        if (apid == ENT_PID_NU_E || apid == ENT_PID_NU_MU ||
+            apid == ENT_PID_NU_TAU) {
+                const double rho0 =
+                    context->ancester(context, daughter->pid, daughter);
+                if (rho0 > 0.) {
+                        /* Neutral current events. */
+                        proget_v[0] = (daughter->pid > 0) ? 1 : 3;
+                        proget_v[1] = proget_v[0] + 4;
+                        p[0] = rho0 * N * cross_section_compute(mode,
+                                              proget_v[0], cs0, cs1, p1, p2);
+                        p[1] = p[0] +
+                            rho0 * Z * cross_section_compute(
+                                           mode, proget_v[1], cs0, cs1, p1, p2);
+
+                        /* Elastic event on an atomic electron. */
+                        proget_v[2] = (apid == ENT_PID_NU_E) ? 8 : 10;
+                        if (daughter->pid > 0) proget_v[2]++;
+                        p[2] = p[1] +
+                            rho0 * Z * cross_section_compute(
+                                           mode, proget_v[2], cs0, cs1, p1, p2);
+
+                        ancester_v[np++] = daughter->pid;
+                        ancester_v[np++] = daughter->pid;
+                        ancester_v[np++] = daughter->pid;
+                }
+
+                /* True decay process. */
+                if (apid != ENT_PID_NU_E) {
+                        const int lpid =
+                            (daughter->pid > 0) ? apid - 1 : 1 - apid;
+                        const double rho0 =
+                            context->ancester(context, lpid, daughter);
+                        if (rho0 > 0.) {
+                                proget_v[np] = PROGET_N;
+                                p[np] = p[np - 1] + rho0; /* TODO: decay. */
+                                ancester_v[np++] = lpid;
+                        }
+                }
+
+                /* Inverse decay processes. */
+                if (daughter->pid == ENT_PID_NU_E) {
+                        const double rho0 =
+                            context->ancester(context, ENT_PID_NU_MU, daughter);
+                        if (rho0 > 0.) {
+                                proget_v[np] = 12;
+                                p[np] = p[np - 1] +
+                                    rho0 * Z * cross_section_compute(mode,
+                                                   proget_v[np], cs0, cs1, p1,
+                                                   p2);
+                                ancester_v[np++] = ENT_PID_NU_MU;
+                        }
+                        const double rho1 = context->ancester(
+                            context, ENT_PID_NU_TAU, daughter);
+                        if (rho1 > 0.) {
+                                proget_v[np] = 13;
+                                p[np] = p[np - 1] +
+                                    rho1 * Z * cross_section_compute(mode,
+                                                   proget_v[np], cs0, cs1, p1,
+                                                   p2);
+                                ancester_v[np++] = ENT_PID_NU_TAU;
+                        }
+                } else if ((daughter->pid == ENT_PID_NU_BAR_MU) ||
+                    (daughter->pid == ENT_PID_NU_BAR_TAU)) {
+                        const double rho0 = context->ancester(
+                            context, ENT_PID_NU_BAR_E, daughter);
+                        if (rho0 > 0.) {
+                                proget_v[np] =
+                                    (daughter->pid == ENT_PID_NU_BAR_MU) ? 14 :
+                                                                           15;
+                                p[np] = p[np - 1] +
+                                    rho0 * Z * cross_section_compute(mode,
+                                                   proget_v[np], cs0, cs1, p1,
+                                                   p2);
+                                ancester_v[np++] = ENT_PID_NU_BAR_E;
+                        }
+                }
+        } else if ((daughter->pid == ENT_PID_ELECTRON) ||
+            (daughter->pid == ENT_PID_MUON) || (daughter->pid == ENT_PID_TAU)) {
+                const int npid = (daughter->pid > 0) ? apid + 1 : apid - 1;
+                const double rho0 = context->ancester(context, npid, daughter);
+                if (rho0 > 0.) {
+                        /* Charged current processes. */
+                        proget_v[0] = (daughter->pid > 0) ? 0 : 2;
+                        proget_v[1] = proget_v[0] + 4;
+                        p[0] = rho0 * N * cross_section_compute(mode,
+                                              proget_v[0], cs0, cs1, p1, p2);
+                        p[1] = p[0] +
+                            rho0 * Z * cross_section_compute(
+                                           mode, proget_v[1], cs0, cs1, p1, p2);
+
+                        /* Inverse decay process. */
+                        proget_v[2] = (daughter->pid == ENT_PID_MUON) ? 12 : 13;
+                        p[2] = p[1] +
+                            rho0 * Z * cross_section_compute(
+                                           mode, proget_v[2], cs0, cs1, p1, p2);
+
+                        ancester_v[np++] = npid;
+                        ancester_v[np++] = npid;
+                        ancester_v[np++] = npid;
+                }
+
+                if (daughter->pid == ENT_PID_ELECTRON) {
+                        /* Elastic processes on an atomic electron. */
+                        const int pid[6] = { ENT_PID_NU_E, ENT_PID_NU_BAR_E,
+                                ENT_PID_NU_MU, ENT_PID_NU_BAR_MU,
+                                ENT_PID_NU_TAU, ENT_PID_NU_BAR_TAU };
+                        const int pgt[6] = { 8, 9, 10, 11, 10, 11 };
+
+                        int i;
+                        for (i = 0; i < 6; i++) {
+                                const double rho0 = context->ancester(
+                                    context, pid[i], daughter);
+                                if (rho0 > 0.) {
+                                        proget_v[np] = pgt[i];
+                                        p[np] = p[np - 1] +
+                                            rho0 * Z * cross_section_compute(
+                                                           mode, proget_v[np],
+                                                           cs0, cs1, p1, p2);
+                                        ancester_v[np++] = pid[i];
+                                }
+                        }
+                } else {
+                        /* Inverse decay process with a nu_bar_e ancester. */
+                        const double rho0 = context->ancester(
+                            context, ENT_PID_NU_BAR_E, daughter);
+                        if (rho0 > 0.) {
+                                proget_v[np] =
+                                    (daughter->pid == ENT_PID_MUON) ? 14 : 15;
+                                p[np] = p[np - 1] +
+                                    rho0 * Z * cross_section_compute(mode,
+                                                   proget_v[np], cs0, cs1, p1,
+                                                   p2);
+                                ancester_v[np++] = ENT_PID_NU_BAR_E;
+                        }
+                }
+        } else
+                return ENT_RETURN_DOMAIN_ERROR;
+
+        /* Randomise the ancester and the interaction process. */
+        if (np == 0) return ENT_RETURN_DOMAIN_ERROR;
+        const double r = context->random(context) * p[np - 1];
+        int i;
+        for (i = 0; i < np; i++)
+                if (r <= p[i]) break;
+        *ancester = ancester_v[i];
+        *proget = proget_v[i];
+        const double dp = (i == 0) ? p[0] : p[i] - p[i - 1];
+        daughter->weight *= p[np - 1] / dp;
+
+        return ENT_RETURN_SUCCESS;
+}
+
+/* Vertex randomisation in forward Monte-Carlo. */
+enum ent_return vertex_forward(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
     struct ent_medium * medium, enum ent_process process,
     struct ent_state * product)
 {
-        ENT_ACKNOWLEDGE(ent_vertex);
-        if (product != NULL) product->pid = ENT_PID_NONE;
-
-        /* Check and format the inputs. */
-        if ((physics == NULL) || (context == NULL) ||
-            (context->random == NULL) || (state == NULL) || (medium == NULL))
-                ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
-
         /* Get the process and target index. */
         int proget;
         if (process < 0) {
@@ -2104,13 +2272,13 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                 if ((rc = transport_cross_section(physics, state->pid,
                          state->energy, medium->Z, medium->A, cs)) !=
                     ENT_RETURN_SUCCESS)
-                        ENT_RETURN(rc);
+                        return rc;
 
                 /* Then, let us randomise the interaction process and its
                  * corresponding target.
                  */
                 const double r = cs[PROGET_N - 1] * context->random(context);
-                if (r < 0.) ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+                if (r < 0.) return ENT_RETURN_DOMAIN_ERROR;
                 for (proget = 0; proget < PROGET_N; proget++)
                         if (r <= cs[proget]) break;
         } else if ((process == ENT_PROCESS_DIS_CC) ||
@@ -2122,10 +2290,10 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                 int proget_p, proget_n;
                 if ((rc = proget_compute(state->pid, ENT_PID_PROTON, process,
                          &proget_p)) != ENT_RETURN_SUCCESS)
-                        ENT_RETURN(rc);
+                        return rc;
                 if ((rc = proget_compute(state->pid, ENT_PID_NEUTRON, process,
                          &proget_n)) != ENT_RETURN_SUCCESS)
-                        ENT_RETURN(rc);
+                        return rc;
 
                 /* Then, let us build the interpolation or extrapolation
                  * factors for the cross-sections.
@@ -2157,11 +2325,74 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                 enum ent_return rc;
                 if ((rc = proget_compute(state->pid, ENT_PID_ELECTRON, process,
                          &proget)) != ENT_RETURN_SUCCESS)
-                        ENT_RETURN(rc);
+                        return rc;
         }
 
         /* Process the vertex. */
-        ENT_RETURN(transport_vertex(physics, context, proget, state, product));
+        return transport_vertex(physics, context, proget, state, product);
+}
+
+/* Vertex randomisation in backward Monte-Carlo. */
+enum ent_return vertex_backward(struct ent_physics * physics,
+    struct ent_context * context, struct ent_state * state,
+    struct ent_medium * medium, enum ent_process process,
+    struct ent_state * product)
+{
+        /* Get the ancester, the process and the target. */
+        enum ent_pid ancester;
+        enum proget_index proget;
+        if (process < 0) {
+                /* Randomise the ancester, the process and the target if no
+                 * clue has been provided.
+                 */
+                enum ent_return rc;
+                if ((rc = transport_ancester_draw(physics, context, state,
+                    medium, &ancester, &proget)) != ENT_RETURN_SUCCESS)
+                        return rc;
+        }
+        else if (process == ENT_PROCESS_DIS_CC) {
+
+        }
+        else if (process == ENT_PROCESS_DIS_NC) {
+
+        }
+        else if (process == ENT_PROCESS_ELASTIC) {
+
+        }
+        else if (process == ENT_PROCESS_INVERSE_MUON) {
+
+        }
+        else if (process == ENT_PROCESS_INVERSE_TAU) {
+
+        }
+        /* TODO: inverse decay from direct model. */
+        else
+                return ENT_RETURN_DOMAIN_ERROR;
+
+        return ENT_RETURN_SUCCESS;
+}
+
+/* API interface for a Monte-Carlo interaction vertex. */
+enum ent_return ent_vertex(struct ent_physics * physics,
+    struct ent_context * context, struct ent_state * state,
+    struct ent_medium * medium, enum ent_process process,
+    struct ent_state * product)
+{
+        ENT_ACKNOWLEDGE(ent_vertex);
+        if (product != NULL) product->pid = ENT_PID_NONE;
+
+        /* Check and format the inputs. */
+        if ((physics == NULL) || (context == NULL) ||
+            (context->random == NULL) || (state == NULL) || (medium == NULL))
+                ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
+
+        /* Process the vertex. */
+        if (context->ancester == NULL)
+                ENT_RETURN(vertex_forward(
+                    physics, context, state, medium, process, product));
+        else
+                ENT_RETURN(vertex_backward(
+                    physics, context, state, medium, process, product));
 }
 
 /* API interface for a Monte-Carlo tranport. */
