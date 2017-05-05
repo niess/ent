@@ -54,8 +54,8 @@ int main(int nargc, char * argv[])
         enum ent_pid projectile = (nargc > 2) ? atoi(argv[2]) : ENT_PID_NU_TAU;
         enum ent_process process =
             (nargc > 3) ? atoi(argv[3]) : ENT_PROCESS_DIS_CC;
-        enum ent_pid Z = (nargc > 4) ? atof(argv[4]) : 0.5;
-        enum ent_pid A = (nargc > 5) ? atof(argv[5]) : 1.;
+        double Z = (nargc > 4) ? atof(argv[4]) : 0.5;
+        double A = (nargc > 5) ? atof(argv[5]) : 1.;
         int events = (nargc > 6) ? atoi(argv[6]) : 1000000;
 
         /* Register the error handler for ENT library functions. */
@@ -107,9 +107,9 @@ int main(int nargc, char * argv[])
                 ent_vertex(
                     physics, &context, &neutrino, &medium, process, &product);
                 if (process == ENT_PROCESS_DIS_CC)
-                        fprintf(stream, "%12.5lE\n", neutrino.energy / energy);
-                else
                         fprintf(stream, "%12.5lE\n", product.energy / energy);
+                else
+                        fprintf(stream, "%12.5lE\n", neutrino.energy / energy);
         }
         fclose(stream);
 
