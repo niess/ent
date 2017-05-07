@@ -79,7 +79,7 @@ int main(int nargc, char * argv[])
         ent_physics_create(&physics, "data/pdf/CT14nnlo_0000.dat");
 
         /* Instanciate a new simulation context. */
-        struct ent_context context = { &medium, &random, 1, depth };
+        struct ent_context context = { &medium, &random, NULL, depth };
 
         /* Run a batch of Monte-Carlo transports. */
         FILE * stream = fopen("transport.dat", "w+");

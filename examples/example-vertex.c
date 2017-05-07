@@ -95,7 +95,7 @@ int main(int nargc, char * argv[])
         fclose(stream);
 
         /* Instanciate a new simulation context and target medium. */
-        struct ent_context context = { NULL, &random, 1 };
+        struct ent_context context = { NULL, &random, NULL };
         struct ent_medium medium = { Z, A };
 
         /* Run a batch of Monte-Carlo vertices. */
@@ -107,9 +107,9 @@ int main(int nargc, char * argv[])
                 ent_vertex(
                     physics, &context, &neutrino, &medium, process, &product);
                 if (process == ENT_PROCESS_DIS_CC)
-                        fprintf(stream, "%12.5lE\n", product.energy / energy);
-                else
                         fprintf(stream, "%12.5lE\n", neutrino.energy / energy);
+                else
+                        fprintf(stream, "%12.5lE\n", product.energy / energy);
         }
         fclose(stream);
 

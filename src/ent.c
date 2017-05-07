@@ -833,6 +833,53 @@ static double dcs_integrate(struct ent_physics * physics,
 #undef N_GQ
 }
 
+/* Compute the DIS cross-section as function of y, i.e. integrated over x
+ * using a Gaussian quadrature.
+ */
+/* DEBUG static */ double dcs_dis_y(struct ent_physics * physics,
+    enum ent_pid projectile, double energy, double Z, double A,
+    enum ent_process process, double y)
+{
+/*
+ * Coefficients for the Gaussian quadrature from:
+ * https://pomax.github.io/bezierinfo/legendre-gauss.html.
+ */
+#define N_GQ 9
+        const double xGQ[N_GQ] = { 0.0000000000000000, -0.8360311073266358,
+                0.8360311073266358, -0.9681602395076261, 0.9681602395076261,
+                -0.3242534234038089, 0.3242534234038089, -0.6133714327005904,
+                0.6133714327005904 };
+        const double wGQ[N_GQ] = { 0.3302393550012598, 0.1806481606948574,
+                0.1806481606948574, 0.0812743883615744, 0.0812743883615744,
+                0.3123470770400029, 0.3123470770400029, 0.2606106964029354,
+                0.2606106964029354 };
+
+        double xmin, xmax;
+        int nx;
+        if (energy >= 1E+04) {
+                nx = 3;
+                xmin = 1E-12;
+                xmax = 1.;
+        } else {
+                nx = 6;
+                xmin = 1. / energy;
+                if (xmin > 1E-02) xmin = 1E-02;
+                xmax = 1.;
+        }
+        const double dlx = log(xmax / xmin) / nx;
+        double I = 0.;
+        int i;
+        for (i = 0; i < nx * N_GQ; i++) {
+                const double x =
+                    xmin * exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dlx);
+                I += wGQ[i % N_GQ] * x * dcs_compute(physics, projectile,
+                                             energy, Z, A, process, x, y);
+        }
+        return 0.5 * I * dlx;
+
+#undef N_GQ
+}
+
 /* Tabulate the interactions lengths and processes weights. */
 static void physics_tabulate_cs(struct ent_physics * physics)
 {
@@ -1638,153 +1685,66 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
-/* Sample the E and Q2 parameters in a backward DIS event using a bilinear
- * interpolation of the asymptotic PDF.
- */
+/* Sample the E and Q2 parameters in a backward DIS event. */
 static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state, int proget,
-    double * E_, double * Q2_, double * weight)
+    double * E, double * Q2, double * weight)
 {
-        /* Unpack the tables, ect ... */
-        const double * const pdf =
-            physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
-        const double * const cdf =
-            physics->dis_cdf + proget * (DIS_Q2_N - 1) * (DIS_X_N - 1);
-
-        /* Sample (x, Q2) over a bilinear interpolation of the
-         * asymptotic pdf in (ln(x), ln(Q2)). First let us map the table's
-         * cell index (ix, iQ2) using a dichotomy.
-         */
-        double x = 0., Q2 = 0.;
+        /* Sample y using a bias PDF. */
+        const double alpha = 0.5;
+        double ry, y;
         for (;;) {
-                int ix, iQ2;
-                double r;
-                int i1 = (DIS_Q2_N - 1) * (DIS_X_N - 1) - 1;
-                r = cdf[i1] * context->random(context);
-                if (r <= cdf[0]) {
-                        i1 = ix = iQ2 = 0;
-                } else {
-                        int i0 = 0;
-                        while (i1 - i0 > 1) {
-                                int i2 = (i0 + i1) / 2;
-                                if (r > cdf[i2]) i0 = i2;
-                                else i1 = i2;
-                        }
-                        ix = i1 % (DIS_X_N - 1);
-                        iQ2 = i1 / (DIS_X_N - 1);
-                        r -= cdf[i0];
+                ry = context->random(context);
+                y = pow(ry, 1. / (1. - alpha));
+                if ((y > 0.) && (y < 1.)) break;
+        }
+        *E = state->energy / (1. - y);
+        const double pdf0 = (1. - alpha) * ry / y;
+
+        /* Sample x assuming an asymptotic small x PDF.
+        const double lambda = 0.3;
+        const double x0 = 0.5 * ENT_MASS_W * ENT_MASS_W /
+            (*E * y * ENT_MASS_NUCLEON);
+        double x, pdf0;
+        for (;;) {
+                x = pow(context->random(context), 1. / (1. - lambda));
+                if (x >= 1.) continue;
+                const double f = x0 / (x0 + x);
+                if (context->random(context) <= f * f) {
+                        pdf0 = (1. - alpha) * (1. - lambda) * pow(y, -alpha) *
+                            pow(x, -lambda) * f * f;
+                        break;
                 }
-
-                /* Ten, let us sample over the cell. First sample over the
-                 * marginal CDF for x, given the bilinear model.
-                 */
-                const double f00 = pdf[iQ2 * DIS_X_N + ix];
-                const double f01 = pdf[iQ2 * DIS_X_N + ix + 1];
-                const double f10 = pdf[(iQ2 + 1) * DIS_X_N + ix];
-                const double f11 = pdf[(iQ2 + 1) * DIS_X_N + ix + 1];
-                const double ax = f10 + f11 - f00 - f01;
-                const double bx = f00 + f01;
-                const double cx =
-                    -4. * r / (physics->dis_dlQ2 * physics->dis_dlx);
-                double dx = bx * bx - ax * cx;
-                if (dx < 0.)
-                        dx = 0.;
-                else
-                        dx = sqrt(dx);
-                const double hx = (dx - bx) / ax;
-                x = physics->dis_xmin * exp((ix + hx) * physics->dis_dlx);
-                if (x <= 0.) continue;
-
-                /* Second, sample over the conditional CDF for Q2. */
-                const double f0 = f00 * (1. - hx) + f10 * hx;
-                const double f1 = f01 * (1. - hx) + f11 * hx;
-                const double ay = f1 - f0;
-                const double by = f0;
-                const double cy = -context->random(context) * (f0 + f1);
-                double dy = by * by - ay * cy;
-                if (dy < 0.)
-                        dy = 0.;
-                else
-                        dy = sqrt(dy);
-                const double hy = (dy - by) / ay;
-                Q2 = physics->dis_Q2min * exp((iQ2 + hy) * physics->dis_dlQ2);
-                break;
         }
+        *Q2 = 2. * ENT_MASS_NUCLEON * (*E) * x * y;
+        DEBUG
+        */
+        *Q2 = 10.;
 
-        /* Compute the BMC weight as the ratio of the true PDF, i.e. including
-         * the (1 - y)**2 factor(s), to the asymtotic one. First let us compute
-         * the relevant structure functions.
+        /* Compute the true PDF. First let us compute the differential
+         * cross-section integrated over x.
          */
-        const int nf = physics->pdf->nf;
-        const int eps = (proget / 2) % 2 ? -1 : 1;
         const double Z = (proget / 4);
-        const double N = 1. - Z;
-        float xfx[LHAPDF_NF_MAX];
-        lha_pdf_compute(physics->pdf, x, Q2, xfx);
-        const double E = state->energy + 0.5 * Q2 / (ENT_MASS_NUCLEON * x);
-        const double y = 1. - state->energy / E;
+        const double A = 1.;
+        enum ent_process process =
+            (proget % 2) ? ENT_PROCESS_DIS_NC : ENT_PROCESS_DIS_CC;
+        int pid;
+        if (process == ENT_PROCESS_DIS_NC)
+                pid = state->pid;
+        else
+                pid = (state->pid > 0) ? state->pid - 1 : 1 - state->pid;
+        const double dcs1 = dcs_dis_y(physics, pid, *E, Z, A, process, y);
 
-        double factor0, factor1;
-        if ((proget % 2) == 0) {
-                /* Charged current DIS process. */
-                const double d = (Z <= 0.) ? 0. : xfx[1 * eps + nf];
-                const double u = (N <= 0.) ? 0. : xfx[2 * eps + nf];
-                const double s = xfx[3 * eps + nf];
-                const double b = xfx[5 * eps + nf];
-                const double F1 = Z * d + N * u + s + b;
-
-                const double dbar = (N <= 0.) ? 0. : xfx[-1 * eps + nf];
-                const double ubar = (Z <= 0.) ? 0. : xfx[-2 * eps + nf];
-                const double cbar = xfx[-4 * eps + nf];
-                const double F2 = N * dbar + Z * ubar + cbar;
-
-                factor0 = F1 + F2;
-                factor1 = F1 + F2 * (1. - y) * (1. - y);
-        } else {
-                /* Neutral current DIS process. */
-                const double d = xfx[1 * eps + nf];
-                const double u = xfx[2 * eps + nf];
-                const double s = xfx[3 * eps + nf];
-                const double c = xfx[4 * eps + nf];
-                const double b = xfx[5 * eps + nf];
-
-                const double s23 = 2. * ENT_PHYS_SIN_THETA_W_2 / 3.;
-                const double gp2 = 1. + 4. * s23 * (s23 - 1.);
-                const double gm2 = 4. * s23 * s23;
-                const double gpp2 = 1. + s23 * (s23 - 2.);
-                const double gpm2 = s23 * s23;
-                const double y1 = 1. - y;
-                const double y12 = y1 * y1;
-                factor0 = (gp2 + gm2) * (Z * u + N * d + c);
-                factor1 = (gp2 + gm2 * y12) * (Z * u + N * d + c);
-                factor0 += (gpp2 + gpm2) * (Z * d + N * u + s + b);
-                factor1 += (gpp2 + gpm2 * y12) * (Z * d + N * u + s + b);
-
-                const double dbar = xfx[-1 * eps + nf];
-                const double ubar = xfx[-2 * eps + nf];
-                const double sbar = xfx[-3 * eps + nf];
-                const double cbar = xfx[-4 * eps + nf];
-                const double bbar = xfx[-5 * eps + nf];
-                factor0 += (gm2 + gp2) * (Z * ubar + N * dbar + cbar);
-                factor1 += (gm2 + gp2 * y12) * (Z * ubar + N * dbar + cbar);
-                factor0 += (gpm2 + gpp2) * (Z * dbar + N * ubar + sbar + bbar);
-                factor1 += (gpm2 + gpp2 * y12) *
-                    (Z * dbar + N * ubar + sbar + bbar);
-        }
-
-        /* Then let us compute the total cross-sections of both processes. */
+        /* Then, let us compute the total cross-section. */
         double *csl, *csh;
         double pl, ph;
-        int mode = cross_section_prepare(
-            physics, E, &csl, &csh, &pl, &ph);
+        int mode = cross_section_prepare(physics, *E, &csl, &csh, &pl, &ph);
         const double cs1 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
-        const int iend = (DIS_Q2_N - 1) * (DIS_X_N - 1) - 1;
-        const double cs0 = cdf[iend];
+        const double pdf1 = dcs1 / cs1;
 
-        *weight *= factor1 * cs0  / (factor0 * cs1);
-        *E_ = E;
-        *Q2_ = Q2;
+        /* Update the BMC weight. */
+        *weight *= pdf1 / (pdf0 * (1. - y));
 
         return ENT_RETURN_SUCCESS;
 }
@@ -2233,8 +2193,7 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
 /* Randomise the ancester at a backward vertex. */
 static enum ent_return transport_ancester_draw(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * daughter,
-    struct ent_medium * medium, enum ent_pid * ancester,
-    int * proget)
+    struct ent_medium * medium, enum ent_pid * ancester, int * proget)
 {
         /* Build the interpolation or extrapolation factors for cross-sections.
          */
@@ -2409,17 +2368,17 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
 /* Compute the p and n cross-sections for a DIS standalone vertex. */
 static enum ent_return vertex_dis_compute(struct ent_physics * physics,
     enum ent_pid pid, double energy, struct ent_medium * medium,
-    enum ent_process process, int * proget_p_, int * proget_n_,
-    double * cs_p, double * cs_n)
+    enum ent_process process, int * proget_p_, int * proget_n_, double * cs_p,
+    double * cs_n)
 {
         enum ent_return rc;
         int proget_p, proget_n;
-        if ((rc = proget_compute(pid, ENT_PID_PROTON, process,
-                 &proget_p)) != ENT_RETURN_SUCCESS)
+        if ((rc = proget_compute(pid, ENT_PID_PROTON, process, &proget_p)) !=
+            ENT_RETURN_SUCCESS)
                 return rc;
         *proget_p_ = proget_p;
-        if ((rc = proget_compute(pid, ENT_PID_NEUTRON, process,
-                 &proget_n)) != ENT_RETURN_SUCCESS)
+        if ((rc = proget_compute(pid, ENT_PID_NEUTRON, process, &proget_n)) !=
+            ENT_RETURN_SUCCESS)
                 return rc;
         *proget_n_ = proget_n;
 
@@ -2428,20 +2387,18 @@ static enum ent_return vertex_dis_compute(struct ent_physics * physics,
          */
         double *cs0, *cs1;
         double p1, p2;
-        int mode = cross_section_prepare(
-            physics, energy, &cs0, &cs1, &p1, &p2);
+        int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
 
         /* Compute the relevant cross-sections and randomise the
          * target accordingly.
          */
         *cs_p = (medium->Z > 0.) ?
-            medium->Z * cross_section_compute(
-                            mode, proget_p, cs0, cs1, p1, p2) :
+            medium->Z *
+                cross_section_compute(mode, proget_p, cs0, cs1, p1, p2) :
             0.;
         const double N = medium->A - medium->Z;
         *cs_n = (N > 0.) ?
-            N * cross_section_compute(
-                    mode, proget_n, cs0, cs1, p1, p2) :
+            N * cross_section_compute(mode, proget_n, cs0, cs1, p1, p2) :
             0.;
 
         return ENT_RETURN_SUCCESS;
@@ -2450,8 +2407,8 @@ static enum ent_return vertex_dis_compute(struct ent_physics * physics,
 /* Randomise the proget index for a DIS standalone vertex.  */
 static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
-    struct ent_medium * medium, enum ent_process process,
-    int * proget, double * weight)
+    struct ent_medium * medium, enum ent_process process, int * proget,
+    double * weight)
 {
         /* Get the mother's pid. */
         enum ent_pid pid;
@@ -2467,13 +2424,13 @@ static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
         int proget_p, proget_n;
         double cs_p, cs_n;
         if ((rc = vertex_dis_compute(physics, pid, state->energy, medium,
-            process, &proget_p, &proget_n, &cs_p, &cs_n)) != ENT_RETURN_SUCCESS)
+                 process, &proget_p, &proget_n, &cs_p, &cs_n)) !=
+            ENT_RETURN_SUCCESS)
                 return rc;
 
         /* Randomise the target accordingly. */
-        *proget = (context->random(context) < cs_p / (cs_p + cs_n)) ?
-            proget_p :
-            proget_n;
+        *proget = (context->random(context) < cs_p / (cs_p + cs_n)) ? proget_p :
+                                                                      proget_n;
 
         if (context->ancester != NULL) {
                 /* Initialise the BMC weight. */
@@ -2517,7 +2474,7 @@ enum ent_return vertex_forward(struct ent_physics * physics,
                  */
                 enum ent_return rc;
                 if ((rc = vertex_dis_randomise(physics, context, state, medium,
-                    process, &proget, NULL)) != ENT_RETURN_SUCCESS)
+                         process, &proget, NULL)) != ENT_RETURN_SUCCESS)
                         return rc;
         } else {
                 /* This is an interaction with an atomic electron. Let's get
@@ -2548,10 +2505,9 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                  */
                 enum ent_return rc;
                 if ((rc = transport_ancester_draw(physics, context, state,
-                    medium, &ancester, &proget)) != ENT_RETURN_SUCCESS)
+                         medium, &ancester, &proget)) != ENT_RETURN_SUCCESS)
                         return rc;
-        }
-        else if ((process == ENT_PROCESS_DIS_CC) ||
+        } else if ((process == ENT_PROCESS_DIS_CC) ||
             (process == ENT_PROCESS_DIS_NC)) {
                 /* Randomise the target assuming the daughters's energy as
                  * the mother's one.
@@ -2559,12 +2515,12 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                 enum ent_return rc;
                 double E, Q2, weight = state->weight;
                 if ((rc = vertex_dis_randomise(physics, context, state, medium,
-                    process, &proget, &weight)) != ENT_RETURN_SUCCESS)
+                         process, &proget, &weight)) != ENT_RETURN_SUCCESS)
                         return rc;
 
                 /* Randomise the backward interaction. */
                 if ((rc = backward_sample_EQ2(physics, context, state, proget,
-                    &E, &Q2, &weight)) != ENT_RETURN_SUCCESS)
+                         &E, &Q2, &weight)) != ENT_RETURN_SUCCESS)
                         return rc;
 
                 /* Correct for the biasing during the target's randomisation. */
@@ -2573,30 +2529,25 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                 int proget_p, proget_n;
                 double cs_p, cs_n;
                 if ((rc = vertex_dis_compute(physics, pid, state->energy,
-                    medium, process, &proget_p, &proget_n, &cs_p, &cs_n))
-                    != ENT_RETURN_SUCCESS)
+                         medium, process, &proget_p, &proget_n, &cs_p,
+                         &cs_n)) != ENT_RETURN_SUCCESS)
                         return rc;
                 const double cs = (proget == proget_p) ? cs_p : cs_n;
                 weight *= cs / (cs_p + cs_n);
 
                 /* Update the MC state. */
-                if (product != NULL)
-                        memcpy(product, state, sizeof(*product));
+                if (product != NULL) memcpy(product, state, sizeof(*product));
                 state->pid = pid;
                 state->energy = E;
                 state->weight = weight;
                 /* TODO: compute the mother's direction. */
-        }
-        else if (process == ENT_PROCESS_DIS_NC) {
+        } else if (process == ENT_PROCESS_DIS_NC) {
 
-        }
-        else if (process == ENT_PROCESS_ELASTIC) {
+        } else if (process == ENT_PROCESS_ELASTIC) {
 
-        }
-        else if (process == ENT_PROCESS_INVERSE_MUON) {
+        } else if (process == ENT_PROCESS_INVERSE_MUON) {
 
-        }
-        else if (process == ENT_PROCESS_INVERSE_TAU) {
+        } else if (process == ENT_PROCESS_INVERSE_TAU) {
 
         }
         /* TODO: inverse decay from direct model. */
@@ -2619,6 +2570,7 @@ enum ent_return ent_vertex(struct ent_physics * physics,
         if ((physics == NULL) || (context == NULL) ||
             (context->random == NULL) || (state == NULL) || (medium == NULL))
                 ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
+        if (medium->A < medium->Z) ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
 
         /* Process the vertex. */
         if (context->ancester == NULL)
