@@ -1688,7 +1688,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
 /* Sample the E and Q2 parameters in a backward DIS event. */
 static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state, int proget,
-    double * E, double * Q2, double * weight)
+    double * E, double * Q2)
 {
         /* Sample y using a bias PDF. */
         const double alpha = 0.5;
@@ -1699,31 +1699,23 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
                 if ((y > 0.) && (y < 1.)) break;
         }
         *E = state->energy / (1. - y);
-        const double pdf0 = (1. - alpha) * ry / y;
+        double pdf0 = (1. - alpha) * ry / y;
 
-        /* Sample x assuming an asymptotic small x PDF.
-        const double lambda = 0.3;
-        const double x0 = 0.5 * ENT_MASS_W * ENT_MASS_W /
-            (*E * y * ENT_MASS_NUCLEON);
-        double x, pdf0;
+        /* Sample x assuming an asymptotic small x PDF. */
+        const double beta = 2.5;
+        const double x0 =
+            0.5 * ENT_MASS_W * ENT_MASS_W / (*E * y * ENT_MASS_NUCLEON);
+        const double b2 = pow(1. + 1. / x0, 1. - beta) - 1.;
+        double rx, x;
         for (;;) {
-                x = pow(context->random(context), 1. / (1. - lambda));
-                if (x >= 1.) continue;
-                const double f = x0 / (x0 + x);
-                if (context->random(context) <= f * f) {
-                        pdf0 = (1. - alpha) * (1. - lambda) * pow(y, -alpha) *
-                            pow(x, -lambda) * f * f;
-                        break;
-                }
+                rx = context->random(context);
+                x = x0 * (pow(1. + rx * b2, 1. / (1. - beta)) - 1.);
+                if ((x > 0.) || (x < 1.)) break;
         }
+        pdf0 *= (1. - beta) * (1. + rx * b2) / (b2 * (x0 + x));
         *Q2 = 2. * ENT_MASS_NUCLEON * (*E) * x * y;
-        DEBUG
-        */
-        *Q2 = 10.;
 
-        /* Compute the true PDF. First let us compute the differential
-         * cross-section integrated over x.
-         */
+        /* Compute the true PDF. First let's get the DCS. */
         const double Z = (proget / 4);
         const double A = 1.;
         enum ent_process process =
@@ -1733,7 +1725,7 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
                 pid = state->pid;
         else
                 pid = (state->pid > 0) ? state->pid - 1 : 1 - state->pid;
-        const double dcs1 = dcs_dis_y(physics, pid, *E, Z, A, process, y);
+        const double dcs1 = dcs_dis(physics, pid, *E, Z, A, process, x, y);
 
         /* Then, let us compute the total cross-section. */
         double *csl, *csh;
@@ -1744,7 +1736,7 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
         const double pdf1 = dcs1 / cs1;
 
         /* Update the BMC weight. */
-        *weight *= pdf1 / (pdf0 * (1. - y));
+        state->weight *= pdf1 / (pdf0 * (1. - y));
 
         return ENT_RETURN_SUCCESS;
 }
@@ -1916,8 +1908,8 @@ static void transport_rotate(
             cos_theta * direction[2] + st * (cos_phi * u0z + sin_phi * u1z);
 }
 
-/* Process an interaction vertex. */
-static enum ent_return transport_vertex(struct ent_physics * physics,
+/* Process a forward interaction vertex. */
+static enum ent_return transport_vertex_forward(struct ent_physics * physics,
     struct ent_context * context, int proget, struct ent_state * neutrino,
     struct ent_state * product)
 {
@@ -2108,6 +2100,81 @@ static enum ent_return transport_vertex(struct ent_physics * physics,
         }
 
         return ENT_RETURN_SUCCESS;
+}
+
+/* Process a BMC vertex. */
+static enum ent_return transport_vertex_backward(struct ent_physics * physics,
+    struct ent_context * context, int proget, struct ent_state * state,
+    struct ent_state * product)
+
+{
+        /* Backup the initial state. */
+        if (product != NULL) memcpy(product, state, sizeof(*product));
+
+        /* Process the corresponding vertex. */
+        if (proget <= PROGET_NC_NU_BAR_PROTON) {
+                /* Sample the energy loss. */
+                enum ent_return rc;
+                double Enu, Q2;
+                if ((rc = backward_sample_EQ2(physics, context, state, proget,
+                         &Enu, &Q2)) != ENT_RETURN_SUCCESS)
+                        return rc;
+
+                /* Update the MC state. */
+                if ((proget % 2) == 0) {
+                        /* Charged current event. */
+                        state->pid += (state->pid > 0) ? -1 : 1;
+                        const double Emu = state->energy;
+                        state->energy = Enu;
+                        double mu;
+                        const int aid = abs(state->pid);
+                        if (aid == ENT_PID_NU_E)
+                                mu = ENT_MASS_ELECTRON;
+                        else if (aid == ENT_PID_NU_MU)
+                                mu = ENT_MASS_MUON;
+                        else if (aid == ENT_PID_NU_TAU)
+                                mu = ENT_MASS_TAU;
+                        else
+                                return ENT_RETURN_DOMAIN_ERROR;
+
+                        /* Compute the mother's neutrino direction. */
+                        const double pmu = sqrt(Emu * (Emu + 2. * mu));
+                        double ct = (Emu - 0.5 * (Q2 + mu * mu) / Enu) / pmu;
+                        if (ct > 1.)
+                                ct = 1.;
+                        else if (ct < -1.)
+                                ct = -1.;
+                        const double phi = 2. * M_PI * context->random(context);
+                        const double cp = cos(phi);
+                        const double sp = sin(phi);
+                        transport_rotate(state, ct, cp, sp);
+                } else {
+                        /* Neutral current event. */
+                        const double Ep = state->energy;
+                        state->energy = Enu;
+                        double ct = 1. - 0.5 * Q2 / (Enu * Ep);
+                        if (ct < -1.) ct = -1.;
+                        const double phi = 2. * M_PI * context->random(context);
+                        const double cp = cos(phi);
+                        const double sp = sin(phi);
+                        transport_rotate(state, ct, cp, sp);
+                }
+        }
+
+        return ENT_RETURN_SUCCESS;
+}
+
+/* Process an interaction vertex. */
+static enum ent_return transport_vertex(struct ent_physics * physics,
+    struct ent_context * context, int proget, struct ent_state * state,
+    struct ent_state * product)
+{
+        if (context->ancester == NULL)
+                return transport_vertex_forward(
+                    physics, context, proget, state, product);
+        else
+                return transport_vertex_backward(
+                    physics, context, proget, state, product);
 }
 
 /* Compute the tranport cross-sections for a given projectile and
@@ -2407,8 +2474,7 @@ static enum ent_return vertex_dis_compute(struct ent_physics * physics,
 /* Randomise the proget index for a DIS standalone vertex.  */
 static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
-    struct ent_medium * medium, enum ent_process process, int * proget,
-    double * weight)
+    struct ent_medium * medium, enum ent_process process, int * proget)
 {
         /* Get the mother's pid. */
         enum ent_pid pid;
@@ -2433,9 +2499,9 @@ static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
                                                                       proget_n;
 
         if (context->ancester != NULL) {
-                /* Initialise the BMC weight. */
+                /* Update the BMC weight. */
                 const double cs = (*proget == proget_p) ? cs_p : cs_n;
-                *weight *= (cs_p + cs_n) / cs;
+                state->weight *= (cs_p + cs_n) / cs;
         }
 
         return ENT_RETURN_SUCCESS;
@@ -2474,7 +2540,7 @@ enum ent_return vertex_forward(struct ent_physics * physics,
                  */
                 enum ent_return rc;
                 if ((rc = vertex_dis_randomise(physics, context, state, medium,
-                         process, &proget, NULL)) != ENT_RETURN_SUCCESS)
+                         process, &proget)) != ENT_RETURN_SUCCESS)
                         return rc;
         } else {
                 /* This is an interaction with an atomic electron. Let's get
@@ -2498,7 +2564,7 @@ enum ent_return vertex_backward(struct ent_physics * physics,
 {
         /* Get the ancester, the process and the target. */
         enum ent_pid ancester;
-        int proget;
+        int proget = -1;
         if (process < 0) {
                 /* Randomise the ancester, the process and the target if no
                  * clue has been provided.
@@ -2513,34 +2579,9 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                  * the mother's one.
                  */
                 enum ent_return rc;
-                double E, Q2, weight = state->weight;
                 if ((rc = vertex_dis_randomise(physics, context, state, medium,
-                         process, &proget, &weight)) != ENT_RETURN_SUCCESS)
+                         process, &proget)) != ENT_RETURN_SUCCESS)
                         return rc;
-
-                /* Randomise the backward interaction. */
-                if ((rc = backward_sample_EQ2(physics, context, state, proget,
-                         &E, &Q2, &weight)) != ENT_RETURN_SUCCESS)
-                        return rc;
-
-                /* Correct for the biasing during the target's randomisation. */
-                enum ent_pid pid = abs(state->pid);
-                if (state->pid < 0) pid = -pid;
-                int proget_p, proget_n;
-                double cs_p, cs_n;
-                if ((rc = vertex_dis_compute(physics, pid, state->energy,
-                         medium, process, &proget_p, &proget_n, &cs_p,
-                         &cs_n)) != ENT_RETURN_SUCCESS)
-                        return rc;
-                const double cs = (proget == proget_p) ? cs_p : cs_n;
-                weight *= cs / (cs_p + cs_n);
-
-                /* Update the MC state. */
-                if (product != NULL) memcpy(product, state, sizeof(*product));
-                state->pid = pid;
-                state->energy = E;
-                state->weight = weight;
-                /* TODO: compute the mother's direction. */
         } else if (process == ENT_PROCESS_DIS_NC) {
 
         } else if (process == ENT_PROCESS_ELASTIC) {
@@ -2553,6 +2594,26 @@ enum ent_return vertex_backward(struct ent_physics * physics,
         /* TODO: inverse decay from direct model. */
         else
                 return ENT_RETURN_DOMAIN_ERROR;
+
+        /* Process the vertex. */
+        enum ent_return rc;
+        if ((rc = transport_vertex(physics, context, proget, state, product)) !=
+            ENT_RETURN_SUCCESS)
+                return rc;
+
+        if ((process == ENT_PROCESS_DIS_CC) ||
+            (process == ENT_PROCESS_DIS_NC)) {
+                /* Correct for the biasing during the target's randomisation. */
+                enum ent_return rc;
+                int proget_p, proget_n;
+                double cs_p, cs_n;
+                if ((rc = vertex_dis_compute(physics, state->pid, state->energy,
+                         medium, process, &proget_p, &proget_n, &cs_p,
+                         &cs_n)) != ENT_RETURN_SUCCESS)
+                        return rc;
+                const double cs = (proget == proget_p) ? cs_p : cs_n;
+                state->weight *= cs / (cs_p + cs_n);
+        }
 
         return ENT_RETURN_SUCCESS;
 }
