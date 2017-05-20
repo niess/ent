@@ -91,10 +91,14 @@ enum proget_index {
         PROGET_ELASTIC_NU_E,
         /* Elastic scattering of an anti nu_e on a an electron. */
         PROGET_ELASTIC_NU_BAR_E,
-        /* Elastic scattering of a nu_X={mu, tau} on a an electron. */
-        PROGET_ELASTIC_NU_X,
-        /* Elastic scattering of an anti nu_X={mu, tau} on a an electron. */
-        PROGET_ELASTIC_NU_BAR_X,
+        /* Elastic scattering of a nu_mu on a an electron. */
+        PROGET_ELASTIC_NU_MU,
+        /* Elastic scattering of an anti nu_mu on a an electron. */
+        PROGET_ELASTIC_NU_BAR_MU,
+        /* Elastic scattering of a nu_tau on a an electron. */
+        PROGET_ELASTIC_NU_TAU,
+        /* Elastic scattering of an anti nu_tau on a an electron. */
+        PROGET_ELASTIC_NU_BAR_TAU,
         /* Inverse muon decay with a nu_mu projectile. */
         PROGET_INVERSE_NU_MU_MU,
         /* Inverse tau decay with a nu_tau projectile. */
@@ -887,15 +891,16 @@ static void physics_tabulate_cs(struct ent_physics * physics)
                 ENT_PROCESS_DIS_NC, ENT_PROCESS_DIS_CC, ENT_PROCESS_DIS_NC,
                 ENT_PROCESS_DIS_CC, ENT_PROCESS_DIS_NC, ENT_PROCESS_DIS_CC,
                 ENT_PROCESS_DIS_NC, ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC,
-                ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC,
-                ENT_PROCESS_INVERSE_MUON, ENT_PROCESS_INVERSE_TAU,
-                ENT_PROCESS_INVERSE_MUON, ENT_PROCESS_INVERSE_TAU };
+                ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC, ENT_PROCESS_ELASTIC,
+                ENT_PROCESS_ELASTIC, ENT_PROCESS_INVERSE_MUON,
+                ENT_PROCESS_INVERSE_TAU, ENT_PROCESS_INVERSE_MUON,
+                ENT_PROCESS_INVERSE_TAU };
         const enum ent_pid projectile[PROGET_N - 1] = { ENT_PID_NU_E,
                 ENT_PID_NU_E, ENT_PID_NU_BAR_E, ENT_PID_NU_BAR_E, ENT_PID_NU_E,
                 ENT_PID_NU_E, ENT_PID_NU_BAR_E, ENT_PID_NU_BAR_E, ENT_PID_NU_E,
                 ENT_PID_NU_BAR_E, ENT_PID_NU_MU, ENT_PID_NU_BAR_MU,
-                ENT_PID_NU_MU, ENT_PID_NU_TAU, ENT_PID_NU_BAR_E,
-                ENT_PID_NU_BAR_E };
+                ENT_PID_NU_TAU, ENT_PID_NU_BAR_TAU, ENT_PID_NU_MU,
+                ENT_PID_NU_TAU, ENT_PID_NU_BAR_E, ENT_PID_NU_BAR_E };
 
         const double dlE = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
         double * table;
@@ -1115,11 +1120,14 @@ static enum ent_return proget_compute(enum ent_pid projectile,
                                 *proget = PROGET_ELASTIC_NU_E;
                         else if (projectile == ENT_PID_NU_BAR_E)
                                 *proget = PROGET_ELASTIC_NU_BAR_E;
-                        else if ((projectile == ENT_PID_NU_MU) ||
-                            (projectile == ENT_PID_NU_TAU))
-                                *proget = PROGET_ELASTIC_NU_X;
+                        else if (projectile == ENT_PID_NU_MU)
+                                *proget = PROGET_ELASTIC_NU_MU;
+                        else if (projectile == ENT_PID_NU_BAR_MU)
+                                *proget = PROGET_ELASTIC_NU_BAR_MU;
+                        else if (projectile == ENT_PID_NU_TAU)
+                                *proget = PROGET_ELASTIC_NU_TAU;
                         else
-                                *proget = PROGET_ELASTIC_NU_BAR_X;
+                                *proget = PROGET_ELASTIC_NU_BAR_TAU;
                 } else if (process == ENT_PROCESS_INVERSE_MUON) {
                         if (projectile == ENT_PID_NU_MU)
                                 *proget = PROGET_INVERSE_NU_MU_MU;
@@ -1810,8 +1818,9 @@ static double transport_sample_y(struct ent_context * context,
                         if (t * t0 <= t1) break;
                 }
 
-        } else if (proget <= PROGET_ELASTIC_NU_BAR_X) {
-                const double r1 = (proget == PROGET_ELASTIC_NU_X) ?
+        } else if (proget <= PROGET_ELASTIC_NU_BAR_TAU) {
+                const double r1 = ((proget == PROGET_ELASTIC_NU_MU) ||
+                                      (proget == PROGET_ELASTIC_NU_TAU)) ?
                     Re2 / (Re2 + Le2) :
                     Le2 / (Re2 + Le2);
                 for (;;) {
@@ -1851,6 +1860,83 @@ static double transport_sample_y(struct ent_context * context,
         }
 
         return y;
+}
+
+/* Sample the initial energy in a backward interaction with an electron. */
+static enum ent_return backward_sample_E(struct ent_physics * physics,
+    struct ent_context * context, struct ent_state * state, int proget,
+    enum ent_pid * pid0, enum ent_pid * pid1, double * E0, double * E1,
+    double * m1, double * weight)
+{
+        const double Re2 = 4. * ENT_PHYS_SIN_THETA_W_2 * ENT_PHYS_SIN_THETA_W_2;
+        const double Le = 2. * ENT_PHYS_SIN_THETA_W_2 - 1.;
+        const double Le2 = Le * Le;
+
+        /* Sample the inelasticity with a bias model. */
+        if ((proget == PROGET_ELASTIC_NU_E) ||
+            (proget == PROGET_ELASTIC_NU_MU) ||
+            (proget == PROGET_ELASTIC_NU_TAU)) {
+                const double yZ = 0.5 * ENT_MASS_Z * ENT_MASS_Z /
+                    (ENT_MASS_ELECTRON * state->energy);
+                double y;
+                const double r1 = Re2 / (Re2 + Le2);
+                for (;;) {
+                        const double u = context->random(context);
+                        const double r = context->random(context);
+                        y = yZ * u / (1. - u + yZ);
+                        if (r <= r1) {
+                                if (context->random(context) >
+                                    (1. - y) * (1. - y))
+                                        continue;
+                        }
+                        break;
+                }
+                const double yZ1 = 1. + yZ;
+                const double I0 =
+                    yZ * yZ * (Re2 - 2. * Re2 * yZ1 * log(yZ1 / yZ) +
+                                  (Re2 * yZ1 * yZ1 + Le2) / (yZ * yZ1));
+                const double rZ = yZ / (yZ + y);
+                const double pdf0 =
+                    (Re2 * (1. - y) * (1. - y) + Le2) * rZ * rZ / I0;
+
+                if (state->pid == ENT_PID_ELECTRON) {
+                        /* The final state is an electron. */
+                        *E0 = state->energy / y;
+                        *E1 = state->energy * (1. / y - 1.) + ENT_MASS_ELECTRON;
+                        *weight = 1. / y;
+                        if (proget == PROGET_ELASTIC_NU_E)
+                                *pid0 = ENT_PID_NU_E;
+                        else if (proget == PROGET_ELASTIC_NU_MU)
+                                *pid0 = ENT_PID_NU_MU;
+                        else
+                                *pid0 = ENT_PID_NU_TAU;
+                        *pid1 = *pid0;
+                        *m1 = 0.;
+                } else {
+                        /* The final state is a neutrino. */
+                        *E0 = (state->energy - ENT_MASS_ELECTRON) / (1. - y);
+                        *E1 = *E0 * y;
+                        *weight = 1. / (1. - y);
+                        *pid0 = state->pid;
+                        *pid1 = ENT_PID_ELECTRON;
+                        *m1 = ENT_MASS_ELECTRON;
+                }
+
+                /* Compute the true PDF and reweight. */
+                const double dcs1 = dcs_elastic(*pid0, *E0, 1., y);
+                double *csl, *csh;
+                double pl, ph;
+                int mode =
+                    cross_section_prepare(physics, *E0, &csl, &csh, &pl, &ph);
+                const double cs1 =
+                    cross_section_compute(mode, proget, csl, csh, pl, ph);
+                const double pdf1 = dcs1 / cs1;
+                *weight *= pdf1 / pdf0;
+
+                return ENT_RETURN_SUCCESS;
+        }
+
+        return ENT_RETURN_DOMAIN_ERROR;
 }
 
 /* Rotate the state direction. */
@@ -2108,9 +2194,6 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
     struct ent_state * product)
 
 {
-        /* Backup the initial state. */
-        if (product != NULL) memcpy(product, state, sizeof(*product));
-
         /* Process the corresponding vertex. */
         if (proget <= PROGET_NC_NU_BAR_PROTON) {
                 /* Sample the energy loss. */
@@ -2119,6 +2202,9 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                 if ((rc = backward_sample_EQ2(physics, context, state, proget,
                          &Enu, &Q2)) != ENT_RETURN_SUCCESS)
                         return rc;
+
+                /* Backup the initial state. */
+                if (product != NULL) memcpy(product, state, sizeof(*product));
 
                 /* Update the MC state. */
                 if ((proget % 2) == 0) {
@@ -2159,6 +2245,59 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                         const double sp = sin(phi);
                         transport_rotate(state, ct, cp, sp);
                 }
+        } else if (proget < PROGET_GLASHOW_HADRONS) {
+                /* This is an interaction with an atomic electron and a
+                 * neutrino in the final states.
+                 */
+                enum ent_pid pid0, pid1;
+                double E0, E1, m1, c0, c1, weight;
+                for (;;) {
+                        /* Let's first sample the initial energy E. */
+                        enum ent_return rc;
+                        if ((rc = backward_sample_E(physics, context, state,
+                                 proget, &pid0, &pid1, &E0, &E1, &m1,
+                                 &weight)) != ENT_RETURN_SUCCESS)
+                                return rc;
+
+                        /* Then, compute the cosines of the polar angles. */
+                        const double p1 =
+                            (m1 == 0.) ? E1 : sqrt(E1 * E1 - m1 * m1);
+                        const double t1 = E0 + ENT_MASS_ELECTRON - E1;
+                        c1 = 0.5 * (E0 * E0 + p1 * p1 - t1 * t1) / (E0 * p1);
+                        if ((c1 < -1.) || (c1 > 1.)) continue;
+
+                        const double E2 = state->energy;
+                        double m2 = 0.;
+                        if (state->pid == ENT_PID_ELECTRON)
+                                m2 = ENT_MASS_ELECTRON;
+                        else if (state->pid == ENT_PID_MUON)
+                                m2 = ENT_MASS_MUON;
+                        else if (state->pid == ENT_PID_TAU)
+                                m2 = ENT_MASS_TAU;
+                        const double p2 =
+                            (m2 == 0.) ? E2 : sqrt(E2 * E2 - m2 * m2);
+                        const double t2 = E0 + ENT_MASS_ELECTRON - E2;
+                        c0 = 0.5 * (E0 * E0 + p2 * p2 - t2 * t2) / (E0 * p2);
+                        if ((c0 < -1.) || (c0 > 1.)) continue;
+
+                        /* This is a valid event. Let's break. */
+                        break;
+                }
+
+                /* Update the particle states. */
+                state->weight *= weight;
+                const double phi = 2. * M_PI * context->random(context);
+                const double cp = cos(phi);
+                const double sp = sin(phi);
+                if ((product != NULL) && (pid1 != ENT_PID_NONE)) {
+                        memcpy(product, state, sizeof(*product));
+                        product->pid = pid1;
+                        product->energy = E1;
+                        transport_rotate(product, c1, -cp, -sp);
+                }
+                state->pid = pid0;
+                state->energy = E0;
+                transport_rotate(state, c0, cp, sp);
         }
 
         return ENT_RETURN_SUCCESS;
@@ -2218,38 +2357,47 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
                     Z * cross_section_compute(mode, 9, cs0, cs1, p1, p2);
         else
                 cs[9] = cs[8];
-        if ((projectile == ENT_PID_NU_MU) || (projectile == ENT_PID_NU_TAU))
+        if (projectile == ENT_PID_NU_MU)
                 cs[10] = cs[9] +
                     Z * cross_section_compute(mode, 10, cs0, cs1, p1, p2);
         else
                 cs[10] = cs[9];
-        if ((projectile == ENT_PID_NU_BAR_MU) ||
-            (projectile == ENT_PID_NU_BAR_TAU))
+        if (projectile == ENT_PID_NU_BAR_MU)
                 cs[11] = cs[10] +
                     Z * cross_section_compute(mode, 11, cs0, cs1, p1, p2);
         else
                 cs[11] = cs[10];
-        if (projectile == ENT_PID_NU_MU)
+        if (projectile == ENT_PID_NU_TAU)
                 cs[12] = cs[11] +
                     Z * cross_section_compute(mode, 12, cs0, cs1, p1, p2);
         else
                 cs[12] = cs[11];
-        if (projectile == ENT_PID_NU_TAU)
-                cs[13] =
-                    cs[12] + cross_section_compute(mode, 13, cs0, cs1, p1, p2);
+        if (projectile == ENT_PID_NU_BAR_TAU)
+                cs[13] = cs[12] +
+                    Z * cross_section_compute(mode, 13, cs0, cs1, p1, p2);
         else
                 cs[13] = cs[12];
+        if (projectile == ENT_PID_NU_MU)
+                cs[14] = cs[13] +
+                    Z * cross_section_compute(mode, 14, cs0, cs1, p1, p2);
+        else
+                cs[14] = cs[13];
+        if (projectile == ENT_PID_NU_TAU)
+                cs[15] =
+                    cs[14] + cross_section_compute(mode, 15, cs0, cs1, p1, p2);
+        else
+                cs[15] = cs[14];
         if (projectile == ENT_PID_NU_BAR_E) {
                 const double d =
-                    Z * cross_section_compute(mode, 14, cs0, cs1, p1, p2);
-                cs[14] = cs[13] + d;
-                cs[15] = cs[14] +
-                    Z * cross_section_compute(mode, 15, cs0, cs1, p1, p2);
-                cs[16] = cs[15] + d * (ENT_WIDTH_W / ENT_WIDTH_W_TO_MUON - 1.);
+                    Z * cross_section_compute(mode, 16, cs0, cs1, p1, p2);
+                cs[16] = cs[15] + d;
+                cs[17] = cs[16] +
+                    Z * cross_section_compute(mode, 17, cs0, cs1, p1, p2);
+                cs[18] = cs[17] + d * (ENT_WIDTH_W / ENT_WIDTH_W_TO_MUON - 1.);
         } else {
-                cs[14] = cs[13];
-                cs[15] = cs[13];
-                cs[16] = cs[13];
+                cs[16] = cs[15];
+                cs[17] = cs[15];
+                cs[18] = cs[15];
         }
 
         /* Check the result and return. */
@@ -2582,17 +2730,25 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                 if ((rc = vertex_dis_randomise(physics, context, state, medium,
                          process, &proget)) != ENT_RETURN_SUCCESS)
                         return rc;
-        } else if (process == ENT_PROCESS_DIS_NC) {
-
         } else if (process == ENT_PROCESS_ELASTIC) {
-
-        } else if (process == ENT_PROCESS_INVERSE_MUON) {
-
-        } else if (process == ENT_PROCESS_INVERSE_TAU) {
-
-        }
-        /* TODO: inverse decay from direct model. */
-        else
+                if (state->pid == ENT_PID_NU_E)
+                        proget = PROGET_ELASTIC_NU_E;
+                else if (state->pid == ENT_PID_NU_BAR_E)
+                        proget = PROGET_ELASTIC_NU_BAR_E;
+                else if (state->pid == ENT_PID_NU_MU)
+                        proget = PROGET_ELASTIC_NU_MU;
+                else if (state->pid == ENT_PID_NU_BAR_MU)
+                        proget = PROGET_ELASTIC_NU_BAR_MU;
+                else if (state->pid == ENT_PID_NU_TAU)
+                        proget = PROGET_ELASTIC_NU_TAU;
+                else if (state->pid == ENT_PID_NU_BAR_TAU)
+                        proget = PROGET_ELASTIC_NU_BAR_TAU;
+                else if (state->pid == ENT_PID_ELECTRON) {
+                        /* TODO: randomise the mother. */
+                } else
+                        return ENT_RETURN_DOMAIN_ERROR;
+        } else
+                /* TODO: inverse decay from direct model. */
                 return ENT_RETURN_DOMAIN_ERROR;
 
         /* Process the vertex. */
