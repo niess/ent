@@ -106,10 +106,7 @@ int main(int nargc, char * argv[])
                 struct ent_state product;
                 ent_vertex(
                     physics, &context, &neutrino, &medium, process, &product);
-                if (process == ENT_PROCESS_DIS_CC)
-                        fprintf(stream, "%12.5lE\n", neutrino.energy / energy);
-                else
-                        fprintf(stream, "%12.5lE\n", product.energy / energy);
+                fprintf(stream, "%12.5lE\n", product.energy / energy);
         }
         fclose(stream);
 
