@@ -820,7 +820,13 @@ static double dcs_integrate(struct ent_physics * physics,
                 return 0.25 * I * dlx * dly;
         } else {
                 /* Scattering on an atomic electron. */
-                const double ymin = 1E-06;
+                double mu = ENT_MASS_ELECTRON;
+                if (process == ENT_PROCESS_INVERSE_MUON)
+                        mu = ENT_MASS_MUON;
+                else if (process == ENT_PROCESS_INVERSE_TAU)
+                        mu = ENT_MASS_TAU;
+                if (energy <= mu) return 0.;
+                const double ymin = mu / energy;
                 const int ny = 6;
                 const double dly = -log(ymin) / ny;
                 double I = 0.;
@@ -834,53 +840,6 @@ static double dcs_integrate(struct ent_physics * physics,
                 }
                 return 0.5 * I * dly;
         }
-#undef N_GQ
-}
-
-/* Compute the DIS cross-section as function of y, i.e. integrated over x
- * using a Gaussian quadrature.
- */
-/* DEBUG static */ double dcs_dis_y(struct ent_physics * physics,
-    enum ent_pid projectile, double energy, double Z, double A,
-    enum ent_process process, double y)
-{
-/*
- * Coefficients for the Gaussian quadrature from:
- * https://pomax.github.io/bezierinfo/legendre-gauss.html.
- */
-#define N_GQ 9
-        const double xGQ[N_GQ] = { 0.0000000000000000, -0.8360311073266358,
-                0.8360311073266358, -0.9681602395076261, 0.9681602395076261,
-                -0.3242534234038089, 0.3242534234038089, -0.6133714327005904,
-                0.6133714327005904 };
-        const double wGQ[N_GQ] = { 0.3302393550012598, 0.1806481606948574,
-                0.1806481606948574, 0.0812743883615744, 0.0812743883615744,
-                0.3123470770400029, 0.3123470770400029, 0.2606106964029354,
-                0.2606106964029354 };
-
-        double xmin, xmax;
-        int nx;
-        if (energy >= 1E+04) {
-                nx = 3;
-                xmin = 1E-12;
-                xmax = 1.;
-        } else {
-                nx = 6;
-                xmin = 1. / energy;
-                if (xmin > 1E-02) xmin = 1E-02;
-                xmax = 1.;
-        }
-        const double dlx = log(xmax / xmin) / nx;
-        double I = 0.;
-        int i;
-        for (i = 0; i < nx * N_GQ; i++) {
-                const double x =
-                    xmin * exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dlx);
-                I += wGQ[i % N_GQ] * x * dcs_compute(physics, projectile,
-                                             energy, Z, A, process, x, y);
-        }
-        return 0.5 * I * dlx;
-
 #undef N_GQ
 }
 
@@ -1865,7 +1824,7 @@ static double transport_sample_y(struct ent_context * context, double energy,
 static enum ent_return backward_sample_E(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state, int proget,
     enum ent_pid * pid0, enum ent_pid * pid1, double * E0, double * E1,
-    double * m1, double * weight)
+    double * m1)
 {
         /* Sample the inelasticity with the forward model but setting
          * E_i = E_f.
@@ -1882,12 +1841,13 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
         }
 
         /* Configure the initial state and the missing product. */
+        double wJ;
         enum ent_process process;
         if (state->pid == recoil) {
                 /* The final state is the recoiling charged lepton. */
                 *E0 = state->energy / y;
                 *E1 = state->energy * (1. / y - 1.) + ENT_MASS_ELECTRON;
-                *weight = 1. / y;
+                wJ = 1. / y;
                 if (proget == PROGET_ELASTIC_NU_E) {
                         process = ENT_PROCESS_ELASTIC;
                         *pid1 = *pid0 = ENT_PID_NU_E;
@@ -1926,7 +1886,7 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
                 /* The final state is the neutrino ejectile. */
                 *E0 = (state->energy - ENT_MASS_ELECTRON) / (1. - y);
                 *E1 = *E0 * y;
-                *weight = 1. / (1. - y);
+                wJ = 1. / (1. - y);
                 if ((proget >= PROGET_ELASTIC_NU_E) &&
                     (proget <= PROGET_ELASTIC_NU_BAR_TAU)) {
                         process = ENT_PROCESS_ELASTIC;
@@ -1967,7 +1927,7 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
         const double cs1 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
         const double pdf1 = dcs1 / cs1;
-        *weight *= pdf1 / pdf0;
+        state->weight *= pdf1 / pdf0 * wJ;
 
         return ENT_RETURN_SUCCESS;
 }
@@ -2025,6 +1985,24 @@ static void transport_rotate(
             cos_theta * direction[1] + st * (cos_phi * u0y + sin_phi * u1y);
         direction[2] =
             cos_theta * direction[2] + st * (cos_phi * u0z + sin_phi * u1z);
+}
+
+/* Compute the polar angles for an interaction with an atomic electron. */
+static void polar_electron(
+    double Ep, double Er, double Ee, double mu, double * ce, double * cr)
+{
+        const double tmp = mu / Er;
+        const double pr = Er * sqrt(1. + tmp * tmp);
+        *ce = 0.5 * ((Ep / Ee) + (Ee / Ep) - (pr / Ep) * (pr / Ee));
+        if (*ce < -1.)
+                *ce = -1.;
+        else if (*ce > 1.)
+                *ce = 1.;
+        *cr = 0.5 * ((Ep / pr) + (pr / Ep) - (Ee / Ep) * (Ee / pr));
+        if (*cr < -1.)
+                *cr = -1.;
+        else if (*cr > 1.)
+                *cr = 1.;
 }
 
 /* Process a forward interaction vertex. */
@@ -2131,28 +2109,20 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
                  */
                 enum ent_pid ejectile = neutrino->pid;
                 enum ent_pid recoil = ENT_PID_NONE;
-                double y, ce, cr;
+                double y, mu, ce, cr;
                 for (;;) {
                         /* Let's first sample the inelasticity _y_. */
-                        double mu;
                         y = transport_sample_y(context, neutrino->energy,
                             proget, &ejectile, &recoil, &mu);
-                        if ((y < mu / neutrino->energy) || (y > 1.)) continue;
-
-                        /* Then, compute the cosines of the polar angles. */
-                        const double Ep = neutrino->energy;
-                        const double Er = neutrino->energy * y;
-                        const double Ee =
-                            neutrino->energy * (1. - y) + ENT_MASS_ELECTRON;
-                        const double tmp = mu / Er;
-                        const double pr = Er * sqrt(1. + tmp * tmp);
-                        ce = 0.5 *
-                            ((Ep / Ee) + (Ee / Ep) - (pr / Ep) * (pr / Ee));
-                        if ((ce < -1.) || (ce > 1.)) continue;
-                        cr = 0.5 *
-                            ((Ep / pr) + (pr / Ep) - (Ee / Ep) * (Ee / pr));
-                        if ((cr >= -1.) && (cr <= 1.)) break;
+                        if ((y >= mu / neutrino->energy) && (y <= 1.)) break;
                 }
+
+                /* Then, compute the cosines of the polar angles. */
+                const double Ep = neutrino->energy;
+                const double Er = neutrino->energy * y;
+                const double Ee =
+                    neutrino->energy * (1. - y) + ENT_MASS_ELECTRON;
+                polar_electron(Ep, Er, Ee, mu, &ce, &cr);
 
                 /* Update the particles states. */
                 const double phi = 2. * M_PI * context->random(context);
@@ -2238,71 +2208,55 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                 }
         } else if (proget < PROGET_GLASHOW_HADRONS) {
                 /* This is an interaction with an atomic electron and a
-                 * neutrino in the final states.
+                 * neutrino in the final states.  Let's first sample the
+                 * initial energy E.
                  */
                 enum ent_pid pid0, pid1;
-                double E0, E1, m1, c0, c1, weight;
-                for (;;) {
-                        /* Let's first sample the initial energy E. */
-                        enum ent_return rc;
-                        if ((rc = backward_sample_E(physics, context, state,
-                                 proget, &pid0, &pid1, &E0, &E1, &m1,
-                                 &weight)) != ENT_RETURN_SUCCESS)
-                                return rc;
+                double E0, E1, m1;
+                enum ent_return rc;
+                if ((rc = backward_sample_E(physics, context, state, proget,
+                         &pid0, &pid1, &E0, &E1, &m1)) != ENT_RETURN_SUCCESS)
+                        return rc;
 
-                        /* Then, compute the cosines of the polar angles. */
-                        double p1;
-                        if (m1 == 0.)
-                                p1 = E1;
-                        else {
-                                /* Protect against overflow. */
-                                const double r1 = m1 / E1;
-                                p1 = E1 * sqrt(1. - r1 * r1);
-                        }
-                        const double t1 = E0 + ENT_MASS_ELECTRON - E1;
-                        c1 = 0.5 *
-                            ((E0 / p1) + (p1 / E0) - (t1 / E0) * (t1 / p1));
-                        if ((c1 < -1.) || (c1 > 1.)) continue;
-
-                        const double E2 = state->energy;
-                        double m2 = 0.;
+                /* Then, compute the cosines of the polar angles. */
+                double Er, Ee, mu, c0, c1, *ce, *cr;
+                if (m1 > 0.) {
+                        /* The final state is the neutrino ejectile. */
+                        Ee = state->energy;
+                        ce = &c0;
+                        Er = E1;
+                        mu = m1;
+                        cr = &c1;
+                } else {
+                        /* The final state is the recoiling charged lepton. */
+                        Er = state->energy;
                         if (state->pid == ENT_PID_ELECTRON)
-                                m2 = ENT_MASS_ELECTRON;
+                                mu = ENT_MASS_ELECTRON;
                         else if (state->pid == ENT_PID_MUON)
-                                m2 = ENT_MASS_MUON;
+                                mu = ENT_MASS_MUON;
                         else if (state->pid == ENT_PID_TAU)
-                                m2 = ENT_MASS_TAU;
-                        double p2;
-                        if (m2 == 0.)
-                                p2 = E2;
-                        else {
-                                /* Protect against overflow. */
-                                const double r2 = m2 / E2;
-                                p2 = E2 * sqrt(1. - r2 * r2);
-                        }
-                        const double t2 = E0 + ENT_MASS_ELECTRON - E2;
-                        c0 = 0.5 *
-                            ((E0 / p2) + (p2 / E0) - (t2 / E0) * (t2 / p2));
-                        if ((c0 < -1.) || (c0 > 1.)) continue;
-
-                        /* This is a valid event. Let's break. */
-                        break;
+                                mu = ENT_MASS_TAU;
+                        else
+                                return ENT_RETURN_DOMAIN_ERROR;
+                        cr = &c0;
+                        Ee = E1;
+                        ce = &c1;
                 }
+                polar_electron(E0, Er, Ee, mu, ce, cr);
 
-                /* Update the particle states. */
-                state->weight *= weight;
+                /* Update the particles states. */
                 const double phi = 2. * M_PI * context->random(context);
                 const double cp = cos(phi);
                 const double sp = sin(phi);
-                if ((product != NULL) && (pid1 != ENT_PID_NONE)) {
+                state->pid = pid0;
+                state->energy = E0;
+                transport_rotate(state, c0, cp, sp);
+                if (product != NULL) {
                         memcpy(product, state, sizeof(*product));
                         product->pid = pid1;
                         product->energy = E1;
                         transport_rotate(product, c1, -cp, -sp);
                 }
-                state->pid = pid0;
-                state->energy = E0;
-                transport_rotate(state, c0, cp, sp);
         }
 
         return ENT_RETURN_SUCCESS;
@@ -2925,7 +2879,7 @@ exit:
         ENT_RETURN(rc);
 }
 
-#if (GDB_MODE)
+#if (_GDB_MODE)
 /*  For debugging with gdb, on linux. */
 #ifndef __USE_GNU
 #define __USE_GNU
