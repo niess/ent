@@ -828,7 +828,7 @@ static double dcs_integrate(struct ent_physics * physics,
                 if (energy <= mu) return 0.;
                 const double ymin = mu / energy;
                 const int ny = 6;
-                const double dly = -log(ymin) / ny;
+                const double dly = log(0.5 / ymin) / ny;
                 double I = 0.;
                 int i;
                 for (i = 0; i < ny * N_GQ; i++) {
@@ -838,7 +838,19 @@ static double dcs_integrate(struct ent_physics * physics,
                                                      projectile, energy, Z, A,
                                                      process, 0., y);
                 }
-                return 0.5 * I * dly;
+
+                const double y1min = mu / energy;
+                const double dly1 = log(0.5 / y1min) / ny;
+                double I1 = 0.;
+                for (i = 0; i < ny * N_GQ; i++) {
+                        const double y1 = y1min *
+                            exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dly1);
+                        I1 += wGQ[i % N_GQ] * y1 * dcs_compute(physics,
+                                                       projectile, energy, Z, A,
+                                                       process, 0., 1. - y1);
+                }
+
+                return 0.5 * (I * dly + I1 * dly1);
         }
 #undef N_GQ
 }
@@ -1793,8 +1805,6 @@ static double transport_sample_y(struct ent_context * context, double energy,
                         break;
                 }
         } else if (proget <= PROGET_INVERSE_NU_TAU_TAU) {
-                const double u = context->random(context);
-                y = (1. + yW) * u / (yW + u);
                 if (ejectile != NULL) *ejectile = ENT_PID_NU_E;
                 if (proget == PROGET_INVERSE_NU_MU_MU) {
                         *recoil = ENT_PID_MUON;
@@ -1803,6 +1813,12 @@ static double transport_sample_y(struct ent_context * context, double energy,
                         *recoil = ENT_PID_TAU;
                         *mu = ENT_MASS_TAU;
                 }
+                const double x = energy - *mu;
+                const double w =
+                    0.5 * ENT_MASS_W * ENT_MASS_W / ENT_MASS_ELECTRON;
+                const double z = context->random(context);
+                const double e = w * z * x / (w + x * (1. - z));
+                y = 1. - e / energy;
         } else {
                 const double u = context->random(context);
                 y = 1. - pow(u, 1. / 3.);
@@ -1820,14 +1836,17 @@ static double transport_sample_y(struct ent_context * context, double energy,
         return y;
 }
 
-/* Sample the initial energy in a backward interaction with an electron. */
+/* Sample the initial energy in a backward interaction with an electron. An
+ * adjoint like method is used where the inelasticity is sampled at E=E_f
+ * instead of E_i.
+ */
 static enum ent_return backward_sample_E(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state, int proget,
     enum ent_pid * pid0, enum ent_pid * pid1, double * E0, double * E1,
     double * m1)
 {
         /* Sample the inelasticity with the forward model but setting
-         * E_i = E_f.
+         * E = E_f.
          */
         double y, mu;
         enum ent_pid recoil;
@@ -1840,14 +1859,12 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
                 if ((y >= mu / Ei) && (y <= 1.)) break;
         }
 
-        /* Configure the initial state and the missing product. */
-        double wJ;
+        /* Configure the initial state and the missing product */
         enum ent_process process;
         if (state->pid == recoil) {
                 /* The final state is the recoiling charged lepton. */
                 *E0 = state->energy / y;
                 *E1 = state->energy * (1. / y - 1.) + ENT_MASS_ELECTRON;
-                wJ = 1. / y;
                 if (proget == PROGET_ELASTIC_NU_E) {
                         process = ENT_PROCESS_ELASTIC;
                         *pid1 = *pid0 = ENT_PID_NU_E;
@@ -1886,7 +1903,6 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
                 /* The final state is the neutrino ejectile. */
                 *E0 = (state->energy - ENT_MASS_ELECTRON) / (1. - y);
                 *E1 = *E0 * y;
-                wJ = 1. / (1. - y);
                 if ((proget >= PROGET_ELASTIC_NU_E) &&
                     (proget <= PROGET_ELASTIC_NU_BAR_TAU)) {
                         process = ENT_PROCESS_ELASTIC;
@@ -1909,7 +1925,7 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
                 *m1 = mu;
         }
 
-        /* Compute the bias PDF. */
+        /* Compute the PDF at E=E_f. */
         const double dcs0 =
             dcs_compute(physics, *pid0, state->energy, 1., 1., process, 0., y);
         double *csl, *csh;
@@ -1920,14 +1936,16 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
             cross_section_compute(mode, proget, csl, csh, pl, ph);
         const double pdf0 = dcs0 / cs0;
 
-        /* Compute the true PDF and reweight. */
+        /* Compute the true PDF at E=E_i. */
         const double dcs1 =
             dcs_compute(physics, *pid0, *E0, 1., 1., process, 0., y);
         mode = cross_section_prepare(physics, *E0, &csl, &csh, &pl, &ph);
         const double cs1 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
         const double pdf1 = dcs1 / cs1;
-        state->weight *= pdf1 / pdf0 * wJ;
+
+        /* Reweight. */
+        state->weight *= pdf1 * *E0 / (pdf0 * state->energy);
 
         return ENT_RETURN_SUCCESS;
 }
@@ -1992,13 +2010,13 @@ static void polar_electron(
     double Ep, double Er, double Ee, double mu, double * ce, double * cr)
 {
         const double tmp = mu / Er;
-        const double pr = Er * sqrt(1. + tmp * tmp);
-        *ce = 0.5 * ((Ep / Ee) + (Ee / Ep) - (pr / Ep) * (pr / Ee));
+        const double pr = Er * sqrt(1. - tmp * tmp);
+        *ce = 1. - 0.5 * (pr + Ep - Ee) * (pr + Ee - Ep) / (Ep * Ee);
         if (*ce < -1.)
                 *ce = -1.;
         else if (*ce > 1.)
                 *ce = 1.;
-        *cr = 0.5 * ((Ep / pr) + (pr / Ep) - (Ee / Ep) * (Ee / pr));
+        *cr = 1. - 0.5 * (Ee + Ep - pr) * (Ee - pr + Ep) / (Ep * pr);
         if (*cr < -1.)
                 *cr = -1.;
         else if (*cr > 1.)
@@ -2120,8 +2138,7 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
                 /* Then, compute the cosines of the polar angles. */
                 const double Ep = neutrino->energy;
                 const double Er = neutrino->energy * y;
-                const double Ee =
-                    neutrino->energy * (1. - y) + ENT_MASS_ELECTRON;
+                const double Ee = Ep + ENT_MASS_ELECTRON - Er;
                 polar_electron(Ep, Er, Ee, mu, &ce, &cr);
 
                 /* Update the particles states. */
@@ -2131,12 +2148,11 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
                 if ((product != NULL) && (recoil != ENT_PID_NONE)) {
                         memcpy(product, neutrino, sizeof(*product));
                         product->pid = recoil;
-                        product->energy = y * neutrino->energy;
+                        product->energy = Er;
                         transport_rotate(product, cr, -cp, -sp);
                 }
                 neutrino->pid = ejectile;
-                neutrino->energy =
-                    neutrino->energy * (1. - y) + ENT_MASS_ELECTRON;
+                neutrino->energy = Ee;
                 transport_rotate(neutrino, ce, cp, sp);
         } else if (proget == PROGET_GLASHOW_HADRONS) {
                 /* This is a total conversion of a anti nu_e neutrino on an
@@ -2879,7 +2895,7 @@ exit:
         ENT_RETURN(rc);
 }
 
-#if (_GDB_MODE)
+#if (_USE_GDB)
 /*  For debugging with gdb, on linux. */
 #ifndef __USE_GNU
 #define __USE_GNU
