@@ -46,6 +46,10 @@
 #define ENT_WIDTH_W 2.085
 /* The W boson partial width to muon + nu_mu, in GeV/c^2. */
 #define ENT_WIDTH_W_TO_MUON 0.22164
+/* The muon decay length, in m. */
+#define ENT_CTAU0_MUON 659.09433
+/* The tau decay length, in m. */
+#define ENT_CTAU0_TAU 8.709E-05
 /* The Fermi coupling constant GF/(hbar*c)^3, in GeV^-2. */
 #define ENT_PHYS_GF 1.1663787E-05
 /* The Planck constant as hbar*c, in GeV * m. */
@@ -2380,11 +2384,102 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
+/* Generic builder for the ancester likeliness. */
+static void ancester_likeliness_fill(struct ent_context * context,
+    struct ent_state * daughter, double Z, int * np, int * proget_v, double * p,
+    enum ent_pid * ancester_v, int mode, double * cs0, double * cs1, double p1,
+    double p2, const int * pid, const int * proget, int n)
+{
+        int i;
+        for (i = 0; i < n; i++) {
+                const double rho0 =
+                    context->ancester(context, pid[i], daughter);
+                if (rho0 > 0.) {
+                        proget_v[*np] = proget[i];
+                        const double p0 = (*np > 0) ? p[*np - 1] : 0.;
+                        p[*np] = p0 +
+                            rho0 * Z * cross_section_compute(
+                                           mode, proget[i], cs0, cs1, p1, p2);
+                        ancester_v[(*np)++] = pid[i];
+                }
+        }
+}
+
+/* Build the ancester likeliness for an elastic processes with an electron
+ * final state.
+ */
+static void ancester_electron_elastic(struct ent_context * context,
+    struct ent_state * daughter, double Z, int * np, int * proget_v, double * p,
+    enum ent_pid * ancester_v, int mode, double * cs0, double * cs1, double p1,
+    double p2)
+{
+        const int pid[6] = { ENT_PID_NU_E, ENT_PID_NU_BAR_E, ENT_PID_NU_MU,
+                ENT_PID_NU_BAR_MU, ENT_PID_NU_TAU, ENT_PID_NU_BAR_TAU };
+        const int proget[6] = { PROGET_ELASTIC_NU_E, PROGET_ELASTIC_NU_BAR_E,
+                PROGET_ELASTIC_NU_MU, PROGET_ELASTIC_NU_BAR_MU,
+                PROGET_ELASTIC_NU_TAU, PROGET_ELASTIC_NU_BAR_TAU };
+
+        ancester_likeliness_fill(context, daughter, Z, np, proget_v, p,
+            ancester_v, mode, cs0, cs1, p1, p2, pid, proget, 6);
+}
+
+/* Build the ancester likeliness for an inverse muon decay process with a
+ * muon final state.
+ */
+static void ancester_muon_inverse(struct ent_context * context,
+    struct ent_state * daughter, double Z, int * np, int * proget_v, double * p,
+    enum ent_pid * ancester_v, int mode, double * cs0, double * cs1, double p1,
+    double p2)
+{
+        const int pid[2] = { ENT_PID_NU_MU, ENT_PID_NU_BAR_E };
+        const int proget[2] = { PROGET_INVERSE_NU_MU_MU,
+                PROGET_INVERSE_NU_BAR_E_MU };
+
+        ancester_likeliness_fill(context, daughter, Z, np, proget_v, p,
+            ancester_v, mode, cs0, cs1, p1, p2, pid, proget, 2);
+}
+
+/* Build the ancester likeliness for an inverse tau decay process with a
+ * tau final state.
+ */
+static void ancester_tau_inverse(struct ent_context * context,
+    struct ent_state * daughter, double Z, int * np, int * proget_v, double * p,
+    enum ent_pid * ancester_v, int mode, double * cs0, double * cs1, double p1,
+    double p2)
+{
+        const int pid[2] = { ENT_PID_NU_TAU, ENT_PID_NU_BAR_E };
+        const int proget[2] = { PROGET_INVERSE_NU_TAU_TAU,
+                PROGET_INVERSE_NU_BAR_E_TAU };
+
+        ancester_likeliness_fill(context, daughter, Z, np, proget_v, p,
+            ancester_v, mode, cs0, cs1, p1, p2, pid, proget, 2);
+}
+
+/* Randomise the ancester and the interaction process. */
+static enum ent_return ancester_draw(struct ent_context * context,
+    struct ent_state * daughter, int np, int * proget_v, double * p,
+    enum ent_pid * ancester_v, enum ent_pid * ancester, int * proget)
+{
+        if (np == 0) return ENT_RETURN_DOMAIN_ERROR;
+        const double r = context->random(context) * p[np - 1];
+        int i;
+        for (i = 0; i < np; i++)
+                if (r <= p[i]) break;
+        *ancester = ancester_v[i];
+        *proget = proget_v[i];
+        const double dp = (i == 0) ? p[0] : p[i] - p[i - 1];
+        daughter->weight *= p[np - 1] / dp;
+
+        return ENT_RETURN_SUCCESS;
+}
+
 /* Randomise the ancester at a backward vertex. */
 static enum ent_return transport_ancester_draw(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * daughter,
     struct ent_medium * medium, enum ent_pid * ancester, int * proget)
 {
+        /* TODO: clean ... */
+
         /* Build the interpolation or extrapolation factors for cross-sections.
          */
         double *cs0, *cs1;
@@ -2437,7 +2532,15 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                             context->ancester(context, lpid, daughter);
                         if (rho0 > 0.) {
                                 proget_v[np] = PROGET_N;
-                                p[np] = p[np - 1] + rho0; /* TODO: decay. */
+                                double density;
+                                medium->density(medium, daughter, &density);
+                                const double c = (apid == ENT_PID_NU_MU) ?
+                                    ENT_CTAU0_MUON / ENT_MASS_MUON :
+                                    ENT_CTAU0_TAU / ENT_MASS_TAU;
+                                p[np] = p[np - 1] +
+                                    rho0 * N * 1E-03 /
+                                        (ENT_PHYS_NA * density * c *
+                                            daughter->energy);
                                 ancester_v[np++] = lpid;
                         }
                 }
@@ -2506,53 +2609,23 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
 
                 if (daughter->pid == ENT_PID_ELECTRON) {
                         /* Elastic processes on an atomic electron. */
-                        const int pid[6] = { ENT_PID_NU_E, ENT_PID_NU_BAR_E,
-                                ENT_PID_NU_MU, ENT_PID_NU_BAR_MU,
-                                ENT_PID_NU_TAU, ENT_PID_NU_BAR_TAU };
-                        const int pgt[6] = { 8, 9, 10, 11, 10, 11 };
-
-                        int i;
-                        for (i = 0; i < 6; i++) {
-                                const double rho0 = context->ancester(
-                                    context, pid[i], daughter);
-                                if (rho0 > 0.) {
-                                        proget_v[np] = pgt[i];
-                                        p[np] = p[np - 1] +
-                                            rho0 * Z * cross_section_compute(
-                                                           mode, proget_v[np],
-                                                           cs0, cs1, p1, p2);
-                                        ancester_v[np++] = pid[i];
-                                }
-                        }
+                        ancester_electron_elastic(context, daughter, Z, &np,
+                            proget_v, p, ancester_v, mode, cs0, cs1, p1, p2);
+                } else if (daughter->pid == ENT_PID_MUON) {
+                        /* Inverse muon decay process. */
+                        ancester_muon_inverse(context, daughter, Z, &np,
+                            proget_v, p, ancester_v, mode, cs0, cs1, p1, p2);
                 } else {
-                        /* Inverse decay process with a nu_bar_e ancester. */
-                        const double rho0 = context->ancester(
-                            context, ENT_PID_NU_BAR_E, daughter);
-                        if (rho0 > 0.) {
-                                proget_v[np] =
-                                    (daughter->pid == ENT_PID_MUON) ? 14 : 15;
-                                p[np] = p[np - 1] +
-                                    rho0 * Z * cross_section_compute(mode,
-                                                   proget_v[np], cs0, cs1, p1,
-                                                   p2);
-                                ancester_v[np++] = ENT_PID_NU_BAR_E;
-                        }
+                        /* Inverse tau decay process. */
+                        ancester_tau_inverse(context, daughter, Z, &np,
+                            proget_v, p, ancester_v, mode, cs0, cs1, p1, p2);
                 }
         } else
                 return ENT_RETURN_DOMAIN_ERROR;
 
         /* Randomise the ancester and the interaction process. */
-        if (np == 0) return ENT_RETURN_DOMAIN_ERROR;
-        const double r = context->random(context) * p[np - 1];
-        int i;
-        for (i = 0; i < np; i++)
-                if (r <= p[i]) break;
-        *ancester = ancester_v[i];
-        *proget = proget_v[i];
-        const double dp = (i == 0) ? p[0] : p[i] - p[i - 1];
-        daughter->weight *= p[np - 1] / dp;
-
-        return ENT_RETURN_SUCCESS;
+        return ancester_draw(
+            context, daughter, np, proget_v, p, ancester_v, ancester, proget);
 }
 
 /* Compute the p and n cross-sections for a DIS standalone vertex. */
@@ -2719,7 +2792,24 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                 else if (state->pid == ENT_PID_NU_BAR_TAU)
                         proget = PROGET_ELASTIC_NU_BAR_TAU;
                 else if (state->pid == ENT_PID_ELECTRON) {
-                        /* TODO: randomise the mother. */
+                        /* Elastic processes on an atomic electron. */
+                        double *cs0, *cs1;
+                        double p1, p2;
+                        int mode = cross_section_prepare(
+                            physics, state->energy, &cs0, &cs1, &p1, &p2);
+
+                        int proget_v[6] = { -1, -1, -1, -1, -1, -1 };
+                        int ancester_v[6] = { -1, -1, -1, -1, -1, -1 };
+                        double p[6] = { 0., 0., 0., 0., 0., 0. };
+                        int np = 0;
+                        ancester_electron_elastic(context, state, 1., &np,
+                            proget_v, p, ancester_v, mode, cs0, cs1, p1, p2);
+
+                        enum ent_return rc;
+                        if ((rc = ancester_draw(context, state, np, proget_v, p,
+                                 ancester_v, &ancester, &proget)) !=
+                            ENT_RETURN_SUCCESS)
+                                return rc;
                 } else
                         return ENT_RETURN_DOMAIN_ERROR;
         } else if (process == ENT_PROCESS_INVERSE_MUON) {
@@ -2728,7 +2818,24 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                 else if (state->pid == ENT_PID_NU_BAR_MU)
                         proget = PROGET_INVERSE_NU_BAR_E_MU;
                 else if (state->pid == ENT_PID_MUON) {
-                        /* TODO: randomise the mother, nu_mu or nu_bar_e. */
+                        /* Inverse muon decay process. */
+                        double *cs0, *cs1;
+                        double p1, p2;
+                        int mode = cross_section_prepare(
+                            physics, state->energy, &cs0, &cs1, &p1, &p2);
+
+                        int proget_v[2] = { -1, -1 };
+                        int ancester_v[2] = { -1, -1 };
+                        double p[2] = { 0., 0. };
+                        int np = 0;
+                        ancester_muon_inverse(context, state, 1., &np, proget_v,
+                            p, ancester_v, mode, cs0, cs1, p1, p2);
+
+                        enum ent_return rc;
+                        if ((rc = ancester_draw(context, state, np, proget_v, p,
+                                 ancester_v, &ancester, &proget)) !=
+                            ENT_RETURN_SUCCESS)
+                                return rc;
                 } else
                         return ENT_RETURN_DOMAIN_ERROR;
         } else if (process == ENT_PROCESS_INVERSE_TAU) {
@@ -2737,11 +2844,27 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                 else if (state->pid == ENT_PID_NU_BAR_TAU)
                         proget = PROGET_INVERSE_NU_BAR_E_TAU;
                 else if (state->pid == ENT_PID_TAU) {
-                        /* TODO: randomise the mother, nu_tau or nu_bar_e. */
+                        /* Inverse muon decay process. */
+                        double *cs0, *cs1;
+                        double p1, p2;
+                        int mode = cross_section_prepare(
+                            physics, state->energy, &cs0, &cs1, &p1, &p2);
+
+                        int proget_v[2] = { -1, -1 };
+                        int ancester_v[2] = { -1, -1 };
+                        double p[2] = { 0., 0. };
+                        int np = 0;
+                        ancester_tau_inverse(context, state, 1., &np, proget_v,
+                            p, ancester_v, mode, cs0, cs1, p1, p2);
+
+                        enum ent_return rc;
+                        if ((rc = ancester_draw(context, state, np, proget_v, p,
+                                 ancester_v, &ancester, &proget)) !=
+                            ENT_RETURN_SUCCESS)
+                                return rc;
                 } else
                         return ENT_RETURN_DOMAIN_ERROR;
         } else
-                /* TODO: inverse decay from a direct model. */
                 return ENT_RETURN_DOMAIN_ERROR;
 
         /* Process the vertex. */
@@ -2763,6 +2886,10 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                 const double cs = (proget == proget_p) ? cs_p : cs_n;
                 state->weight *= cs / (cs_p + cs_n);
         }
+
+        /* TODO: apply biasing weight for the ancester or process randomistion,
+         * whenever.
+         */
 
         return ENT_RETURN_SUCCESS;
 }
