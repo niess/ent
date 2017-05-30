@@ -93,6 +93,8 @@ enum ent_pid {
  *  Neutrino interaction processes.
  */
 enum ent_process {
+        /** An undefined process, e.g. to be randomised. */
+        ENT_PROCESS_UNDEFINED = -1,
         /** The elastic scattering on electrons, e.g. nu + e -> nu + e. */
         ENT_PROCESS_ELASTIC = 0,
         /** The neutral current DIS process. */
