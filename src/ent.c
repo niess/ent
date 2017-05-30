@@ -75,6 +75,8 @@
 
 /* Indices for Physics processes with a specific projectile and target. */
 enum proget_index {
+        /* Backward decay from a muon or tau. */
+        PROGET_BACKWARD_DECAY = -1,
         /* Charged current DIS of a neutrino on a neutron. */
         PROGET_CC_NU_NEUTRON = 0,
         /* Neutral current DIS of a neutrino on a neutron. */
@@ -2176,6 +2178,12 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
 
 {
         /* Process the corresponding vertex. */
+        if (proget == PROGET_BACKWARD_DECAY) {
+                /* This is a backward decay from a muon or from a tau. It must
+                 * be randomised with an external package.
+                 */
+                return ENT_RETURN_SUCCESS;
+        }
         if (proget <= PROGET_NC_NU_BAR_PROTON) {
                 /* Sample the energy loss. */
                 enum ent_return rc;
@@ -2277,7 +2285,8 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                         product->energy = E1;
                         transport_rotate(product, c1, -cp, -sp);
                 }
-        }
+        } else
+                return ENT_RETURN_DOMAIN_ERROR;
 
         return ENT_RETURN_SUCCESS;
 }
@@ -2536,17 +2545,23 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                         const double rho0 =
                             context->ancester(context, lpid, daughter);
                         if (rho0 > 0.) {
-                                proget_v[np] = PROGET_N;
+                                proget_v[np] = PROGET_BACKWARD_DECAY;
                                 double density;
                                 medium->density(medium, daughter, &density);
-                                const double c = (apid == ENT_PID_NU_MU) ?
-                                    ENT_CTAU0_MUON / ENT_MASS_MUON :
-                                    ENT_CTAU0_TAU / ENT_MASS_TAU;
+                                double c;
+                                if (apid == ENT_PID_NU_MU) {
+                                        const double g =
+                                            daughter->energy / ENT_MASS_MUON;
+                                        c = ENT_CTAU0_MUON * sqrt(g * (2. + g));
+                                } else {
+                                        const double g =
+                                            daughter->energy / ENT_MASS_TAU;
+                                        c = ENT_CTAU0_TAU * sqrt(g * (2. + g));
+                                }
                                 const double p0 = (np > 0) ? p[np - 1] : 0.;
                                 p[np] = p0 +
                                     rho0 * N * 1E-03 /
-                                        (ENT_PHYS_NA * density * c *
-                                            daughter->energy);
+                                        (ENT_PHYS_NA * density * c);
                                 ancester_v[np++] = lpid;
                         }
                 }
@@ -2894,8 +2909,12 @@ enum ent_return vertex_backward(struct ent_physics * physics,
 
         /* Apply any biasing weight for the ancester and for the process
          * randomisation.
+         *
+         * N.B.: if the ancester is a muon or a tau the only possible source
+         * process is a decay. Hence p_true = 1. and there is no need to further
+         * correct the BMC weight.
          */
-        if (process == ENT_PROCESS_UNDEFINED) {
+        if ((process == ENT_PROCESS_UNDEFINED) && ((state->pid % 2) == 0)) {
                 enum ent_return rc;
                 double cs[PROGET_N];
                 if ((rc = transport_cross_section(physics, state->pid,
@@ -2972,7 +2991,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
 
         /* Set any grammage limit. */
         enum ent_event foreseen = ENT_EVENT_NONE;
-        double cs[PROGET_N], Xlim = 0.;
+        double cs[PROGET_N], Xlim = 0., Xint = 0.;
         if (physics != NULL) {
                 /* Compute the cross-sections. */
                 if ((rc = transport_cross_section(physics, state->pid,
@@ -2981,8 +3000,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                         goto exit;
 
                 /* Randomise the depth of the next interaction. */
-                const double Xint =
-                    medium->A * 1E-03 / (cs[PROGET_N - 1] * ENT_PHYS_NA);
+                Xint = medium->A * 1E-03 / (cs[PROGET_N - 1] * ENT_PHYS_NA);
                 Xlim = state->grammage - Xint * log(context->random(context));
 
                 if ((context->grammage_max > 0.) &&
@@ -3020,16 +3038,52 @@ enum ent_return ent_transport(struct ent_physics * physics,
         if ((event_ == ENT_EVENT_LIMIT_GRAMMAGE) &&
             (foreseen == ENT_EVENT_NONE)) {
                 event_ = ENT_EVENT_INTERACTION;
-                /* Randomise the interaction process and the target. */
-                const double r = cs[PROGET_N - 1] * context->random(context);
-                if (r < 0.)
-                        rc = ENT_RETURN_DOMAIN_ERROR;
-                else {
-                        int proget;
-                        for (proget = 0; proget < PROGET_N; proget++)
-                                if (r <= cs[proget]) break;
-                        rc = transport_vertex(
-                            physics, context, proget, state, product);
+                if (context->ancester == NULL) {
+                        /* This is a forward transport. Let us randomise the
+                         * interaction process and the target.
+                         */
+                        const double r =
+                            cs[PROGET_N - 1] * context->random(context);
+                        if (r < 0.)
+                                rc = ENT_RETURN_DOMAIN_ERROR;
+                        else {
+                                int proget;
+                                for (proget = 0; proget < PROGET_N; proget++)
+                                        if (r <= cs[proget]) break;
+                                rc = transport_vertex(
+                                    physics, context, proget, state, product);
+                        }
+                } else {
+                        /* This is a backward transport. First let us randomise
+                         * the ancester and the source process.
+                         */
+                        rc = vertex_backward(physics, context, state, medium,
+                            ENT_PROCESS_UNDEFINED, product);
+
+                        /* The let us apply the effective weight for the
+                         * transport.
+                         */
+                        double X0;
+                        if ((state->pid % 2) == 0) {
+                                /* The ancester was a neutrino. Let us apply
+                                 * a flux like boundary condition at the vertex.
+                                 */
+                                if ((rc = transport_cross_section(physics,
+                                         state->pid, state->energy, medium->Z,
+                                         medium->A, cs)) != ENT_RETURN_SUCCESS)
+                                        goto exit;
+                                X0 = medium->A * 1E-03 /
+                                    (cs[PROGET_N - 1] * ENT_PHYS_NA);
+                        } else {
+                                /* The neutrino originates from a muon or tau
+                                 * decay. A vertex boundary condition is used
+                                 * since the initial state is not known at that
+                                 * point.
+                                 */
+                                event_ = ENT_EVENT_DECAY;
+                                medium->density(medium, state, &X0);
+                        }
+                        state->weight *= Xint / X0;
                 }
         }
 
