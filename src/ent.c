@@ -47,9 +47,9 @@
 /* The W boson partial width to muon + nu_mu, in GeV/c^2. */
 #define ENT_WIDTH_W_TO_MUON 0.22164
 /* The muon decay length, in m. */
-#define ENT_CTAU0_MUON 659.09433
+#define ENT_CTAU_MUON 659.09433
 /* The tau decay length, in m. */
-#define ENT_CTAU0_TAU 8.709E-05
+#define ENT_CTAU_TAU 8.709E-05
 /* The Fermi coupling constant GF/(hbar*c)^3, in GeV^-2. */
 #define ENT_PHYS_GF 1.1663787E-05
 /* The Planck constant as hbar*c, in GeV * m. */
@@ -1182,6 +1182,9 @@ static double cross_section_compute(
         }
 }
 
+static enum ent_return transport_cross_section(struct ent_physics * physics,
+    enum ent_pid projectile, double energy, double Z, double A, double * cs);
+
 /* Generic API function for accessing a specific total cross-section. */
 enum ent_return ent_physics_cross_section(struct ent_physics * physics,
     enum ent_pid projectile, double energy, double Z, double A,
@@ -1190,13 +1193,25 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
         ENT_ACKNOWLEDGE(ent_physics_cross_section);
         *cross_section = 0.;
 
-        /* Build the interpolation or extrapolation factors. */
+        enum ent_return rc;
+        if (process == ENT_PROCESS_NONE) {
+                /* Let us compute the total cross-section. */
+                double cs[PROGET_N];
+                if ((rc = transport_cross_section(physics, projectile, energy,
+                         Z, A, cs)) != ENT_RETURN_SUCCESS)
+                        ENT_RETURN(rc);
+                *cross_section = cs[PROGET_N - 1];
+                return ENT_RETURN_SUCCESS;
+        }
+
+        /* Build the interpolation or extrapolation factors for specific
+         * cross-section.
+         */
         double *cs0, *cs1;
         double p1, p2;
         int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
 
         /* Compute the relevant process-target indices. */
-        enum ent_return rc;
         if ((process == ENT_PROCESS_DIS_CC) ||
             (process == ENT_PROCESS_DIS_NC)) {
                 int proget;
@@ -2478,11 +2493,11 @@ static void ancester_decay(struct ent_context * context,
                 double c;
                 if (abs(mother) == ENT_PID_MUON) {
                         const double g = daughter->energy / ENT_MASS_MUON;
-                        c = ENT_CTAU0_MUON * sqrt(g * (2. + g));
+                        c = ENT_CTAU_MUON * sqrt(g * (2. + g));
                         proget_v[*np] = PROGET_BACKWARD_DECAY_MUON;
                 } else {
                         const double g = daughter->energy / ENT_MASS_TAU;
-                        c = ENT_CTAU0_TAU * sqrt(g * (2. + g));
+                        c = ENT_CTAU_TAU * sqrt(g * (2. + g));
                         proget_v[*np] = PROGET_BACKWARD_DECAY_TAU;
                 }
                 const double p0 = (*np > 0) ? p[*np - 1] : 0.;
@@ -2759,7 +2774,7 @@ enum ent_return vertex_forward(struct ent_physics * physics,
 {
         /* Get the process and target index. */
         int proget;
-        if (process == ENT_PROCESS_UNDEFINED) {
+        if (process == ENT_PROCESS_NONE) {
                 /* Randomise the process and the target if not specified.
                  * First let's compute all the cross-sections.
                  */
@@ -2809,7 +2824,7 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
         /* Get the ancester, the process and the target. */
         enum ent_pid ancester;
         int proget;
-        if (process == ENT_PROCESS_UNDEFINED) {
+        if (process == ENT_PROCESS_NONE) {
                 /* Randomise the ancester, the process and the target if no
                  * clue has been provided.
                  */
@@ -2942,8 +2957,7 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
          * process is a decay. Hence p_true = 1. and there is no need to further
          * correct the BMC weight.
          */
-        if ((process == ENT_PROCESS_UNDEFINED) &&
-            (proget >= PROGET_CC_NU_NEUTRON)) {
+        if ((process == ENT_PROCESS_NONE) && (proget >= PROGET_CC_NU_NEUTRON)) {
                 enum ent_return rc;
                 double cs[PROGET_N];
                 if ((rc = transport_cross_section(physics, state->pid,
@@ -3089,7 +3103,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                          */
                         enum proget_index proget;
                         rc = vertex_backward(physics, context, state, medium,
-                            ENT_PROCESS_UNDEFINED, product, &proget);
+                            ENT_PROCESS_NONE, product, &proget);
 
                         /* The let us apply the effective weight for the
                          * transport.

@@ -93,8 +93,8 @@ enum ent_pid {
  *  Neutrino interaction processes.
  */
 enum ent_process {
-        /** An undefined process, e.g. to be randomised. */
-        ENT_PROCESS_UNDEFINED = -1,
+        /** No specific process. */
+        ENT_PROCESS_NONE = -1,
         /** The elastic scattering on electrons, e.g. nu + e -> nu + e. */
         ENT_PROCESS_ELASTIC = 0,
         /** The neutral current DIS process. */
@@ -329,7 +329,7 @@ enum ent_return ent_physics_create(
 void ent_physics_destroy(struct ent_physics ** physics);
 
 /**
- * The total coss-section.
+ * The total or process specific cross-section.
  *
  * @param physics          A handle for the Physics.
  * @param projectile       The incoming projectile.
@@ -341,8 +341,9 @@ void ent_physics_destroy(struct ent_physics ** physics);
  * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
  * code is returned as detailed below.
  *
- * Compute the total cross-secction for the given projectile incoming on a
- * target (Z, A).
+ * Compute the cross-secction for the given projectile incoming on a
+ * target (Z, A). Set *process* to `ENT_PROCESS_NONE` in order to Compute
+ * the total cross-section.
  *
  * __Error codes__
  *
