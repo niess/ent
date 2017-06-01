@@ -1358,7 +1358,6 @@ static enum ent_return transport_step(struct ent_context * context,
                 state->position[0] += ds_boundary * sgn * state->direction[0];
                 state->position[1] += ds_boundary * sgn * state->direction[1];
                 state->position[2] += ds_boundary * sgn * state->direction[2];
-                *medium = medium1;
 
                 /* Reset any distance limit if no more valid. */
                 if ((context->distance_max > 0.) &&
@@ -1397,10 +1396,13 @@ static enum ent_return transport_step(struct ent_context * context,
         }
 
         /* Update the end step density if a valid change of medium occured. */
-        if ((ds_boundary != 0.) && (*medium != NULL)) {
-                step2 = (*medium)->density(*medium, state, &density1);
-                if ((density1 <= 0.) || (medium1->A <= 0.))
-                        return ENT_RETURN_DOMAIN_ERROR;
+        if ((ds_boundary != 0.) && (*event == ENT_EVENT_NONE)) {
+                *medium = medium1;
+                if (medium1 != NULL) {
+                        step2 = medium1->density(medium1, state, &density1);
+                        if ((density1 <= 0.) || (medium1->A <= 0.))
+                                return ENT_RETURN_DOMAIN_ERROR;
+                }
         }
 
         /* Update and return. */
