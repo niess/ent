@@ -406,8 +406,10 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
 enum ent_event {
         /** No event, e.g. exit when an error occured. */
         ENT_EVENT_NONE = 0,
-        /** The neutrino has triggered a backward decay. */
-        ENT_EVENT_DECAY,
+        /** The neutrino has triggered a backward decay from a muon. */
+        ENT_EVENT_DECAY_MUON,
+        /** The neutrino has triggered a backward decay from a tau. */
+        ENT_EVENT_DECAY_TAU,
         /** The neutrino has exit the simulation area. */
         ENT_EVENT_EXIT,
         /** The neutrino travelled distance has reached a user limit. */

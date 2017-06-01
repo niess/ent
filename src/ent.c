@@ -75,8 +75,10 @@
 
 /* Indices for Physics processes with a specific projectile and target. */
 enum proget_index {
-        /* Backward decay from a muon or tau. */
-        PROGET_BACKWARD_DECAY = -1,
+        /* Backward decay from a tau. */
+        PROGET_BACKWARD_DECAY_TAU = -2,
+        /* Backward decay from a muon. */
+        PROGET_BACKWARD_DECAY_MUON = -1,
         /* Charged current DIS of a neutrino on a neutron. */
         PROGET_CC_NU_NEUTRON = 0,
         /* Neutral current DIS of a neutrino on a neutron. */
@@ -2180,9 +2182,10 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
 
 {
         /* Process the corresponding vertex. */
-        if (proget == PROGET_BACKWARD_DECAY) {
+        if (proget < 0) {
                 /* This is a backward decay from a muon or from a tau. It must
-                 * be randomised with an external package.
+                 * be randomised with an external package. Let us flag this
+                 * case by modifying the PID.
                  */
                 return ENT_RETURN_SUCCESS;
         }
@@ -2466,6 +2469,28 @@ static void ancester_tau_inverse(struct ent_context * context,
             ancester_v, mode, cs0, cs1, p1, p2, pid, proget, 2);
 }
 
+static void ancester_decay(struct ent_context * context,
+    struct ent_state * daughter, enum ent_pid mother, double N, double density,
+    int * np, int * proget_v, double * p, enum ent_pid * ancester_v)
+{
+        const double rho0 = context->ancester(context, mother, daughter);
+        if (rho0 > 0.) {
+                double c;
+                if (abs(mother) == ENT_PID_MUON) {
+                        const double g = daughter->energy / ENT_MASS_MUON;
+                        c = ENT_CTAU0_MUON * sqrt(g * (2. + g));
+                        proget_v[*np] = PROGET_BACKWARD_DECAY_MUON;
+                } else {
+                        const double g = daughter->energy / ENT_MASS_TAU;
+                        c = ENT_CTAU0_TAU * sqrt(g * (2. + g));
+                        proget_v[*np] = PROGET_BACKWARD_DECAY_TAU;
+                }
+                const double p0 = (*np > 0) ? p[*np - 1] : 0.;
+                p[*np] = p0 + rho0 * N * 1E-03 / (ENT_PHYS_NA * density * c);
+                ancester_v[(*np)++] = mother;
+        }
+}
+
 /* Randomise the ancester and the interaction process. */
 static enum ent_return ancester_draw(struct ent_context * context,
     struct ent_state * daughter, int np, int * proget_v, double * p,
@@ -2499,9 +2524,9 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
         /* Check the valid backward processes and compute their a priori
          * probabilities of occurence.
          */
-        int proget_v[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
-        int ancester_v[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
-        double p[8] = { 0., 0., 0., 0., 0., 0., 0., 0. };
+        int proget_v[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+        int ancester_v[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+        double p[9] = { 0., 0., 0., 0., 0., 0., 0., 0., 0. };
         int np = 0;
 
         const double Z = medium->Z;
@@ -2540,33 +2565,34 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                         ancester_v[np++] = daughter->pid;
                 }
 
-                /* True decay process from a muon or tau. */
-                if (apid != ENT_PID_NU_E) {
-                        const int lpid =
-                            (daughter->pid > 0) ? apid - 1 : 1 - apid;
-                        const double rho0 =
-                            context->ancester(context, lpid, daughter);
-                        if (rho0 > 0.) {
-                                proget_v[np] = PROGET_BACKWARD_DECAY;
-                                double density;
-                                medium->density(medium, daughter, &density);
-                                double c;
-                                if (apid == ENT_PID_NU_MU) {
-                                        const double g =
-                                            daughter->energy / ENT_MASS_MUON;
-                                        c = ENT_CTAU0_MUON * sqrt(g * (2. + g));
-                                } else {
-                                        const double g =
-                                            daughter->energy / ENT_MASS_TAU;
-                                        c = ENT_CTAU0_TAU * sqrt(g * (2. + g));
-                                }
-                                const double p0 = (np > 0) ? p[np - 1] : 0.;
-                                p[np] = p0 +
-                                    rho0 * N * 1E-03 /
-                                        (ENT_PHYS_NA * density * c);
-                                ancester_v[np++] = lpid;
+                /* True decay process from a muon. */
+                double density; /* TODO: forward from the tranport. */
+                medium->density(medium, daughter, &density);
+                if (apid != ENT_PID_NU_TAU) {
+                        int mother;
+                        if (apid == ENT_PID_MUON) {
+                                mother = (daughter->pid > 0) ? ENT_PID_MUON :
+                                                               ENT_PID_MUON_BAR;
+                        } else {
+                                mother = (daughter->pid > 0) ?
+                                    ENT_PID_MUON_BAR :
+                                    ENT_PID_MUON;
                         }
+                        ancester_decay(context, daughter, mother, N, density,
+                            &np, proget_v, p, ancester_v);
                 }
+
+                /* True decay process from a tau. */
+                int mother;
+                if (apid == ENT_PID_TAU) {
+                        mother =
+                            (daughter->pid > 0) ? ENT_PID_TAU : ENT_PID_TAU_BAR;
+                } else {
+                        mother =
+                            (daughter->pid > 0) ? ENT_PID_TAU_BAR : ENT_PID_TAU;
+                }
+                ancester_decay(context, daughter, mother, N, density, &np,
+                    proget_v, p, ancester_v);
 
                 /* Inverse decay processes. */
                 if (daughter->pid == ENT_PID_NU_E) {
@@ -2775,10 +2801,10 @@ enum ent_return vertex_forward(struct ent_physics * physics,
 }
 
 /* Vertex randomisation in backward Monte-Carlo. */
-enum ent_return vertex_backward(struct ent_physics * physics,
+static enum ent_return vertex_backward(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
     struct ent_medium * medium, enum ent_process process,
-    struct ent_state * product)
+    struct ent_state * product, enum proget_index * proget_)
 {
         /* Get the ancester, the process and the target. */
         enum ent_pid ancester;
@@ -2916,7 +2942,8 @@ enum ent_return vertex_backward(struct ent_physics * physics,
          * process is a decay. Hence p_true = 1. and there is no need to further
          * correct the BMC weight.
          */
-        if ((process == ENT_PROCESS_UNDEFINED) && ((state->pid % 2) == 0)) {
+        if ((process == ENT_PROCESS_UNDEFINED) &&
+            (proget >= PROGET_CC_NU_NEUTRON)) {
                 enum ent_return rc;
                 double cs[PROGET_N];
                 if ((rc = transport_cross_section(physics, state->pid,
@@ -2928,6 +2955,7 @@ enum ent_return vertex_backward(struct ent_physics * physics,
                 state->weight *= d / cs[PROGET_N - 1];
         }
 
+        if (proget_ != NULL) *proget_ = proget;
         return ENT_RETURN_SUCCESS;
 }
 
@@ -2952,7 +2980,7 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                     physics, context, state, medium, process, product));
         else
                 ENT_RETURN(vertex_backward(
-                    physics, context, state, medium, process, product));
+                    physics, context, state, medium, process, product, NULL));
 }
 
 /* API interface for a Monte-Carlo tranport. */
@@ -3059,15 +3087,16 @@ enum ent_return ent_transport(struct ent_physics * physics,
                         /* This is a backward transport. First let us randomise
                          * the ancester and the source process.
                          */
+                        enum proget_index proget;
                         rc = vertex_backward(physics, context, state, medium,
-                            ENT_PROCESS_UNDEFINED, product);
+                            ENT_PROCESS_UNDEFINED, product, &proget);
 
                         /* The let us apply the effective weight for the
                          * transport.
                          */
                         double X0;
-                        if ((state->pid % 2) == 0) {
-                                /* The ancester was a neutrino. Let us apply
+                        if (proget >= PROGET_CC_NU_NEUTRON) {
+                                /* The ancester is a neutrino. Let us apply
                                  * a flux like boundary condition at the vertex.
                                  */
                                 if ((rc = transport_cross_section(physics,
@@ -3082,8 +3111,11 @@ enum ent_return ent_transport(struct ent_physics * physics,
                                  * since the initial state is not known at that
                                  * point.
                                  */
-                                event_ = ENT_EVENT_DECAY;
-                                medium->density(medium, state, &X0);
+                                event_ =
+                                    (proget == PROGET_BACKWARD_DECAY_MUON) ?
+                                    ENT_EVENT_DECAY_MUON :
+                                    ENT_EVENT_DECAY_TAU;
+                                X0 = density;
                         }
                         state->weight *= Xint / X0;
                 }
