@@ -2485,7 +2485,7 @@ static void ancester_tau_inverse(struct ent_context * context,
 }
 
 static void ancester_decay(struct ent_context * context,
-    struct ent_state * daughter, enum ent_pid mother, double N, double density,
+    struct ent_state * daughter, enum ent_pid mother, double A, double density,
     int * np, int * proget_v, double * p, enum ent_pid * ancester_v)
 {
         const double rho0 = context->ancester(context, mother, daughter);
@@ -2501,7 +2501,7 @@ static void ancester_decay(struct ent_context * context,
                         proget_v[*np] = PROGET_BACKWARD_DECAY_TAU;
                 }
                 const double p0 = (*np > 0) ? p[*np - 1] : 0.;
-                p[*np] = p0 + rho0 * N * 1E-03 / (ENT_PHYS_NA * density * c);
+                p[*np] = p0 + rho0 * A * 1E-03 / (ENT_PHYS_NA * density * c);
                 ancester_v[(*np)++] = mother;
         }
 }
@@ -2581,33 +2581,37 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                 }
 
                 /* True decay process from a muon. */
-                double density; /* TODO: forward from the tranport. */
-                medium->density(medium, daughter, &density);
-                if (apid != ENT_PID_NU_TAU) {
-                        int mother;
-                        if (apid == ENT_PID_MUON) {
-                                mother = (daughter->pid > 0) ? ENT_PID_MUON :
-                                                               ENT_PID_MUON_BAR;
-                        } else {
-                                mother = (daughter->pid > 0) ?
-                                    ENT_PID_MUON_BAR :
-                                    ENT_PID_MUON;
+                if (medium->density != NULL) {
+                        double density; /* TODO: forward from the tranport. */
+                        medium->density(medium, daughter, &density);
+                        if (apid != ENT_PID_NU_TAU) {
+                                int mother;
+                                if (apid == ENT_PID_MUON) {
+                                        mother = (daughter->pid > 0) ?
+                                            ENT_PID_MUON :
+                                            ENT_PID_MUON_BAR;
+                                } else {
+                                        mother = (daughter->pid > 0) ?
+                                            ENT_PID_MUON_BAR :
+                                            ENT_PID_MUON;
+                                }
+                                ancester_decay(context, daughter, mother,
+                                    medium->A, density, &np, proget_v, p,
+                                    ancester_v);
                         }
-                        ancester_decay(context, daughter, mother, N, density,
-                            &np, proget_v, p, ancester_v);
-                }
 
-                /* True decay process from a tau. */
-                int mother;
-                if (apid == ENT_PID_NU_TAU) {
-                        mother =
-                            (daughter->pid > 0) ? ENT_PID_TAU : ENT_PID_TAU_BAR;
-                } else {
-                        mother =
-                            (daughter->pid > 0) ? ENT_PID_TAU_BAR : ENT_PID_TAU;
+                        /* True decay process from a tau. */
+                        int mother;
+                        if (apid == ENT_PID_NU_TAU) {
+                                mother = (daughter->pid > 0) ? ENT_PID_TAU :
+                                                               ENT_PID_TAU_BAR;
+                        } else {
+                                mother = (daughter->pid > 0) ? ENT_PID_TAU_BAR :
+                                                               ENT_PID_TAU;
+                        }
+                        ancester_decay(context, daughter, mother, medium->A,
+                            density, &np, proget_v, p, ancester_v);
                 }
-                ancester_decay(context, daughter, mother, N, density, &np,
-                    proget_v, p, ancester_v);
 
                 /* Inverse decay processes. */
                 if (daughter->pid == ENT_PID_NU_E) {
@@ -3105,7 +3109,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                         rc = vertex_backward(physics, context, state, medium,
                             ENT_PROCESS_NONE, product, &proget);
 
-                        /* The let us apply the effective weight for the
+                        /* Then let us apply the effective weight for the
                          * transport.
                          */
                         double X0;
