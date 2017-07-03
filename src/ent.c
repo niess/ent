@@ -2599,7 +2599,7 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
 
                 /* True decay process from a tau. */
                 int mother;
-                if (apid == ENT_PID_TAU) {
+                if (apid == ENT_PID_NU_TAU) {
                         mother =
                             (daughter->pid > 0) ? ENT_PID_TAU : ENT_PID_TAU_BAR;
                 } else {
