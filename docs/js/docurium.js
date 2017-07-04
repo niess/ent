@@ -668,13 +668,8 @@ $(function() {
 
     github_file: function(file, line, lineto) {
       var data = this.get('data')
-      prefix = docurium.get('github')
-      a = [prefix, 'blob', docurium.get('version'),
-        data.prefix, file]
-      if (!prefix.startsWith('http')) {
-        a.unshift('https://github.com')
-      }
-      url = a.join('/')
+      url = ['https://github.com', docurium.get('github'),
+	     'blob', docurium.get('version'), data.prefix, file].join('/')
       if(line) {
         url += '#L' + line.toString()
         if(lineto) {
