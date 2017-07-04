@@ -248,7 +248,13 @@ typedef double(ent_random_cb)(struct ent_context * context);
  * @param daughter   The daughter state.
  * @return The relative density of the ancester.
  *
- * TODO: document.
+ * This callback **must** be provided for backward Monte-Carlo. It is expected
+ * to return an _a priori_ density estimate for an ancester at the daughter's
+ * location. Returning `0` or less indicates a null density, which disables
+ * the corresponding channel.
+ *
+ * **Warning** : if multiple contexts are used the user must ensure that this
+ * callback is thread safe.
  */
 typedef double(ent_ancester_cb)(struct ent_context * context,
     enum ent_pid ancester, struct ent_state * daughter);

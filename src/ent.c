@@ -2527,7 +2527,8 @@ static enum ent_return ancester_draw(struct ent_context * context,
 /* Randomise the ancester at a backward vertex. */
 static enum ent_return transport_ancester_draw(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * daughter,
-    struct ent_medium * medium, enum ent_pid * ancester, int * proget)
+    struct ent_medium * medium, double density, enum ent_pid * ancester,
+    int * proget)
 {
         /* Build the interpolation or extrapolation factors for cross-sections.
          */
@@ -2582,8 +2583,11 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
 
                 /* True decay process from a muon. */
                 if (medium->density != NULL) {
-                        double density; /* TODO: forward from the tranport. */
-                        medium->density(medium, daughter, &density);
+                        if (density <= 0.) {
+                                medium->density(medium, daughter, &density);
+                                if (density <= 0.)
+                                        return ENT_RETURN_DOMAIN_ERROR;
+                        }
                         if (apid != ENT_PID_NU_TAU) {
                                 int mother;
                                 if (apid == ENT_PID_MUON) {
@@ -2822,7 +2826,7 @@ enum ent_return vertex_forward(struct ent_physics * physics,
 /* Vertex randomisation in backward Monte-Carlo. */
 static enum ent_return vertex_backward(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
-    struct ent_medium * medium, enum ent_process process,
+    struct ent_medium * medium, double density, enum ent_process process,
     struct ent_state * product, enum proget_index * proget_)
 {
         /* Get the ancester, the process and the target. */
@@ -2834,7 +2838,8 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                  */
                 enum ent_return rc;
                 if ((rc = transport_ancester_draw(physics, context, state,
-                         medium, &ancester, &proget)) != ENT_RETURN_SUCCESS)
+                         medium, density, &ancester, &proget)) !=
+                    ENT_RETURN_SUCCESS)
                         return rc;
         } else if ((process == ENT_PROCESS_DIS_CC) ||
             (process == ENT_PROCESS_DIS_NC)) {
@@ -2997,8 +3002,8 @@ enum ent_return ent_vertex(struct ent_physics * physics,
                 ENT_RETURN(vertex_forward(
                     physics, context, state, medium, process, product));
         else
-                ENT_RETURN(vertex_backward(
-                    physics, context, state, medium, process, product, NULL));
+                ENT_RETURN(vertex_backward(physics, context, state, medium, -1.,
+                    process, product, NULL));
 }
 
 /* API interface for a Monte-Carlo tranport. */
@@ -3107,7 +3112,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                          */
                         enum proget_index proget;
                         rc = vertex_backward(physics, context, state, medium,
-                            ENT_PROCESS_NONE, product, &proget);
+                            density, ENT_PROCESS_NONE, product, &proget);
 
                         /* Then let us apply the effective weight for the
                          * transport.
