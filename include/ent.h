@@ -241,23 +241,23 @@ typedef double ent_medium_cb(struct ent_context * context,
 typedef double(ent_random_cb)(struct ent_context * context);
 
 /**
- * Callback providing an a priori relative density of ancesters.
+ * Callback providing an a priori relative density of ancestors.
  *
- * @param context    The Monte-Carlo context requiring an ancester.
- * @param ancester   The PID of the required ancester.
+ * @param context    The Monte-Carlo context requiring an ancestor.
+ * @param ancestor   The PID of the required ancestor.
  * @param daughter   The daughter state.
- * @return The relative density of the ancester.
+ * @return The relative density of the ancestor.
  *
  * This callback **must** be provided for backward Monte-Carlo. It is expected
- * to return an _a priori_ density estimate for an ancester at the daughter's
+ * to return an _a priori_ density estimate for an ancestor at the daughter's
  * location. Returning `0` or less indicates a null density, which disables
  * the corresponding channel.
  *
  * **Warning** : if multiple contexts are used the user must ensure that this
  * callback is thread safe.
  */
-typedef double(ent_ancester_cb)(struct ent_context * context,
-    enum ent_pid ancester, struct ent_state * daughter);
+typedef double(ent_ancestor_cb)(struct ent_context * context,
+    enum ent_pid ancestor, struct ent_state * daughter);
 
 /**
  * Data for a Monte-Carlo context.
@@ -270,8 +270,8 @@ struct ent_context {
         ent_medium_cb * medium;
         /** The random engine callback. */
         ent_random_cb * random;
-        /** The ancester callback, or `NULL` for forward Monte-Carlo. */
-        ent_ancester_cb * ancester;
+        /** The ancestor callback, or `NULL` for forward Monte-Carlo. */
+        ent_ancestor_cb * ancestor;
         /** A user supplied distance limit for the transport, or `0`. */
         double distance_max;
         /** A user supplied grammage limit for the transport, or `0`. */

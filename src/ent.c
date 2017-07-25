@@ -1299,7 +1299,7 @@ static enum ent_return transport_step(struct ent_context * context,
 #define STEP_MIN 1E-06
 
         *event = ENT_EVENT_NONE;
-        const double sgn = (context->ancester == NULL) ? 1. : -1.;
+        const double sgn = (context->ancestor == NULL) ? 1. : -1.;
         if (*step > 0.) {
                 /* Apply any distance limit. */
                 if ((context->distance_max > 0.) &&
@@ -1450,7 +1450,7 @@ static enum ent_event transport_straight(struct ent_context * context,
         }
 
         /* Update the position. */
-        const double sgn = (context->ancester == NULL) ? 1. : -1.;
+        const double sgn = (context->ancestor == NULL) ? 1. : -1.;
         state->position[0] += sgn * state->direction[0] * ds;
         state->position[1] += sgn * state->direction[1] * ds;
         state->position[2] += sgn * state->direction[2] * ds;
@@ -2323,7 +2323,7 @@ static enum ent_return transport_vertex(struct ent_physics * physics,
     struct ent_context * context, int proget, struct ent_state * state,
     struct ent_state * product)
 {
-        if (context->ancester == NULL)
+        if (context->ancestor == NULL)
                 return transport_vertex_forward(
                     physics, context, proget, state, product);
         else
@@ -2420,33 +2420,33 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
-/* Generic builder for the ancester likeliness. */
-static void ancester_likeliness_fill(struct ent_context * context,
+/* Generic builder for the ancestor likeliness. */
+static void ancestor_likeliness_fill(struct ent_context * context,
     struct ent_state * daughter, double Z, int * np, int * proget_v, double * p,
-    enum ent_pid * ancester_v, int mode, double * cs0, double * cs1, double p1,
+    enum ent_pid * ancestor_v, int mode, double * cs0, double * cs1, double p1,
     double p2, const int * pid, const int * proget, int n)
 {
         int i;
         for (i = 0; i < n; i++) {
                 const double rho0 =
-                    context->ancester(context, pid[i], daughter);
+                    context->ancestor(context, pid[i], daughter);
                 if (rho0 > 0.) {
                         proget_v[*np] = proget[i];
                         const double p0 = (*np > 0) ? p[*np - 1] : 0.;
                         p[*np] = p0 +
                             rho0 * Z * cross_section_compute(
                                            mode, proget[i], cs0, cs1, p1, p2);
-                        ancester_v[(*np)++] = pid[i];
+                        ancestor_v[(*np)++] = pid[i];
                 }
         }
 }
 
-/* Build the ancester likeliness for an elastic processes with an electron
+/* Build the ancestor likeliness for an elastic processes with an electron
  * final state.
  */
-static void ancester_electron_elastic(struct ent_context * context,
+static void ancestor_electron_elastic(struct ent_context * context,
     struct ent_state * daughter, double Z, int * np, int * proget_v, double * p,
-    enum ent_pid * ancester_v, int mode, double * cs0, double * cs1, double p1,
+    enum ent_pid * ancestor_v, int mode, double * cs0, double * cs1, double p1,
     double p2)
 {
         const int pid[6] = { ENT_PID_NU_E, ENT_PID_NU_BAR_E, ENT_PID_NU_MU,
@@ -2455,47 +2455,47 @@ static void ancester_electron_elastic(struct ent_context * context,
                 PROGET_ELASTIC_NU_MU, PROGET_ELASTIC_NU_BAR_MU,
                 PROGET_ELASTIC_NU_TAU, PROGET_ELASTIC_NU_BAR_TAU };
 
-        ancester_likeliness_fill(context, daughter, Z, np, proget_v, p,
-            ancester_v, mode, cs0, cs1, p1, p2, pid, proget, 6);
+        ancestor_likeliness_fill(context, daughter, Z, np, proget_v, p,
+            ancestor_v, mode, cs0, cs1, p1, p2, pid, proget, 6);
 }
 
-/* Build the ancester likeliness for an inverse muon decay process with a
+/* Build the ancestor likeliness for an inverse muon decay process with a
  * muon final state.
  */
-static void ancester_muon_inverse(struct ent_context * context,
+static void ancestor_muon_inverse(struct ent_context * context,
     struct ent_state * daughter, double Z, int * np, int * proget_v, double * p,
-    enum ent_pid * ancester_v, int mode, double * cs0, double * cs1, double p1,
+    enum ent_pid * ancestor_v, int mode, double * cs0, double * cs1, double p1,
     double p2)
 {
         const int pid[2] = { ENT_PID_NU_MU, ENT_PID_NU_BAR_E };
         const int proget[2] = { PROGET_INVERSE_NU_MU_MU,
                 PROGET_INVERSE_NU_BAR_E_MU };
 
-        ancester_likeliness_fill(context, daughter, Z, np, proget_v, p,
-            ancester_v, mode, cs0, cs1, p1, p2, pid, proget, 2);
+        ancestor_likeliness_fill(context, daughter, Z, np, proget_v, p,
+            ancestor_v, mode, cs0, cs1, p1, p2, pid, proget, 2);
 }
 
-/* Build the ancester likeliness for an inverse tau decay process with a
+/* Build the ancestor likeliness for an inverse tau decay process with a
  * tau final state.
  */
-static void ancester_tau_inverse(struct ent_context * context,
+static void ancestor_tau_inverse(struct ent_context * context,
     struct ent_state * daughter, double Z, int * np, int * proget_v, double * p,
-    enum ent_pid * ancester_v, int mode, double * cs0, double * cs1, double p1,
+    enum ent_pid * ancestor_v, int mode, double * cs0, double * cs1, double p1,
     double p2)
 {
         const int pid[2] = { ENT_PID_NU_TAU, ENT_PID_NU_BAR_E };
         const int proget[2] = { PROGET_INVERSE_NU_TAU_TAU,
                 PROGET_INVERSE_NU_BAR_E_TAU };
 
-        ancester_likeliness_fill(context, daughter, Z, np, proget_v, p,
-            ancester_v, mode, cs0, cs1, p1, p2, pid, proget, 2);
+        ancestor_likeliness_fill(context, daughter, Z, np, proget_v, p,
+            ancestor_v, mode, cs0, cs1, p1, p2, pid, proget, 2);
 }
 
-static void ancester_decay(struct ent_context * context,
+static void ancestor_decay(struct ent_context * context,
     struct ent_state * daughter, enum ent_pid mother, double A, double density,
-    int * np, int * proget_v, double * p, enum ent_pid * ancester_v)
+    int * np, int * proget_v, double * p, enum ent_pid * ancestor_v)
 {
-        const double rho0 = context->ancester(context, mother, daughter);
+        const double rho0 = context->ancestor(context, mother, daughter);
         if (rho0 > 0.) {
                 double c;
                 if (abs(mother) == ENT_PID_MUON) {
@@ -2509,21 +2509,21 @@ static void ancester_decay(struct ent_context * context,
                 }
                 const double p0 = (*np > 0) ? p[*np - 1] : 0.;
                 p[*np] = p0 + rho0 * A * 1E-03 / (ENT_PHYS_NA * density * c);
-                ancester_v[(*np)++] = mother;
+                ancestor_v[(*np)++] = mother;
         }
 }
 
-/* Randomise the ancester and the interaction process. */
-static enum ent_return ancester_draw(struct ent_context * context,
+/* Randomise the ancestor and the interaction process. */
+static enum ent_return ancestor_draw(struct ent_context * context,
     struct ent_state * daughter, int np, int * proget_v, double * p,
-    enum ent_pid * ancester_v, enum ent_pid * ancester, int * proget)
+    enum ent_pid * ancestor_v, enum ent_pid * ancestor, int * proget)
 {
         if (np == 0) return ENT_RETURN_DOMAIN_ERROR;
         const double r = context->random(context) * p[np - 1];
         int i;
         for (i = 0; i < np; i++)
                 if (r <= p[i]) break;
-        *ancester = ancester_v[i];
+        *ancestor = ancestor_v[i];
         *proget = proget_v[i];
         const double dp = (i == 0) ? p[0] : p[i] - p[i - 1];
         daughter->weight *= p[np - 1] / dp;
@@ -2531,10 +2531,10 @@ static enum ent_return ancester_draw(struct ent_context * context,
         return ENT_RETURN_SUCCESS;
 }
 
-/* Randomise the ancester at a backward vertex. */
-static enum ent_return transport_ancester_draw(struct ent_physics * physics,
+/* Randomise the ancestor at a backward vertex. */
+static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * daughter,
-    struct ent_medium * medium, double density, enum ent_pid * ancester,
+    struct ent_medium * medium, double density, enum ent_pid * ancestor,
     int * proget)
 {
         /* Build the interpolation or extrapolation factors for cross-sections.
@@ -2548,7 +2548,7 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
          * probabilities of occurence.
          */
         int proget_v[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
-        int ancester_v[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+        int ancestor_v[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
         double p[9] = { 0., 0., 0., 0., 0., 0., 0., 0., 0. };
         int np = 0;
 
@@ -2558,7 +2558,7 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
         if (apid == ENT_PID_NU_E || apid == ENT_PID_NU_MU ||
             apid == ENT_PID_NU_TAU) {
                 const double rho0 =
-                    context->ancester(context, daughter->pid, daughter);
+                    context->ancestor(context, daughter->pid, daughter);
                 if (rho0 > 0.) {
                         /* Neutral current events. */
                         proget_v[0] = (daughter->pid > 0) ?
@@ -2583,9 +2583,9 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                             rho0 * Z * cross_section_compute(
                                            mode, proget_v[2], cs0, cs1, p1, p2);
 
-                        ancester_v[np++] = daughter->pid;
-                        ancester_v[np++] = daughter->pid;
-                        ancester_v[np++] = daughter->pid;
+                        ancestor_v[np++] = daughter->pid;
+                        ancestor_v[np++] = daughter->pid;
+                        ancestor_v[np++] = daughter->pid;
                 }
 
                 /* True decay process from a muon. */
@@ -2606,9 +2606,9 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                                             ENT_PID_MUON_BAR :
                                             ENT_PID_MUON;
                                 }
-                                ancester_decay(context, daughter, mother,
+                                ancestor_decay(context, daughter, mother,
                                     medium->A, density, &np, proget_v, p,
-                                    ancester_v);
+                                    ancestor_v);
                         }
 
                         /* True decay process from a tau. */
@@ -2620,14 +2620,14 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                                 mother = (daughter->pid > 0) ? ENT_PID_TAU_BAR :
                                                                ENT_PID_TAU;
                         }
-                        ancester_decay(context, daughter, mother, medium->A,
-                            density, &np, proget_v, p, ancester_v);
+                        ancestor_decay(context, daughter, mother, medium->A,
+                            density, &np, proget_v, p, ancestor_v);
                 }
 
                 /* Inverse decay processes. */
                 if (daughter->pid == ENT_PID_NU_E) {
                         const double rho0 =
-                            context->ancester(context, ENT_PID_NU_MU, daughter);
+                            context->ancestor(context, ENT_PID_NU_MU, daughter);
                         if (rho0 > 0.) {
                                 proget_v[np] = PROGET_INVERSE_NU_MU_MU;
                                 const double p0 = (np > 0) ? p[np - 1] : 0.;
@@ -2635,9 +2635,9 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                                     rho0 * Z * cross_section_compute(mode,
                                                    proget_v[np], cs0, cs1, p1,
                                                    p2);
-                                ancester_v[np++] = ENT_PID_NU_MU;
+                                ancestor_v[np++] = ENT_PID_NU_MU;
                         }
-                        const double rho1 = context->ancester(
+                        const double rho1 = context->ancestor(
                             context, ENT_PID_NU_TAU, daughter);
                         if (rho1 > 0.) {
                                 proget_v[np] = PROGET_INVERSE_NU_TAU_TAU;
@@ -2646,11 +2646,11 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                                     rho1 * Z * cross_section_compute(mode,
                                                    proget_v[np], cs0, cs1, p1,
                                                    p2);
-                                ancester_v[np++] = ENT_PID_NU_TAU;
+                                ancestor_v[np++] = ENT_PID_NU_TAU;
                         }
                 } else if ((daughter->pid == ENT_PID_NU_BAR_MU) ||
                     (daughter->pid == ENT_PID_NU_BAR_TAU)) {
-                        const double rho0 = context->ancester(
+                        const double rho0 = context->ancestor(
                             context, ENT_PID_NU_BAR_E, daughter);
                         if (rho0 > 0.) {
                                 proget_v[np] =
@@ -2662,13 +2662,13 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                                     rho0 * Z * cross_section_compute(mode,
                                                    proget_v[np], cs0, cs1, p1,
                                                    p2);
-                                ancester_v[np++] = ENT_PID_NU_BAR_E;
+                                ancestor_v[np++] = ENT_PID_NU_BAR_E;
                         }
                 }
         } else if ((daughter->pid == ENT_PID_ELECTRON) ||
             (daughter->pid == ENT_PID_MUON) || (daughter->pid == ENT_PID_TAU)) {
                 const int npid = (daughter->pid > 0) ? apid + 1 : -apid - 1;
-                const double rho0 = context->ancester(context, npid, daughter);
+                const double rho0 = context->ancestor(context, npid, daughter);
                 if (rho0 > 0.) {
                         /* Charged current processes. */
                         proget_v[0] = (daughter->pid > 0) ?
@@ -2681,29 +2681,29 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                             rho0 * Z * cross_section_compute(
                                            mode, proget_v[1], cs0, cs1, p1, p2);
 
-                        ancester_v[np++] = npid;
-                        ancester_v[np++] = npid;
+                        ancestor_v[np++] = npid;
+                        ancestor_v[np++] = npid;
                 }
 
                 if (daughter->pid == ENT_PID_ELECTRON) {
                         /* Elastic processes on an atomic electron. */
-                        ancester_electron_elastic(context, daughter, Z, &np,
-                            proget_v, p, ancester_v, mode, cs0, cs1, p1, p2);
+                        ancestor_electron_elastic(context, daughter, Z, &np,
+                            proget_v, p, ancestor_v, mode, cs0, cs1, p1, p2);
                 } else if (daughter->pid == ENT_PID_MUON) {
                         /* Inverse muon decay process. */
-                        ancester_muon_inverse(context, daughter, Z, &np,
-                            proget_v, p, ancester_v, mode, cs0, cs1, p1, p2);
+                        ancestor_muon_inverse(context, daughter, Z, &np,
+                            proget_v, p, ancestor_v, mode, cs0, cs1, p1, p2);
                 } else {
                         /* Inverse tau decay process. */
-                        ancester_tau_inverse(context, daughter, Z, &np,
-                            proget_v, p, ancester_v, mode, cs0, cs1, p1, p2);
+                        ancestor_tau_inverse(context, daughter, Z, &np,
+                            proget_v, p, ancestor_v, mode, cs0, cs1, p1, p2);
                 }
         } else
                 return ENT_RETURN_DOMAIN_ERROR;
 
-        /* Randomise the ancester and the interaction process. */
-        return ancester_draw(
-            context, daughter, np, proget_v, p, ancester_v, ancester, proget);
+        /* Randomise the ancestor and the interaction process. */
+        return ancestor_draw(
+            context, daughter, np, proget_v, p, ancestor_v, ancestor, proget);
 }
 
 /* Compute the p and n cross-sections for a DIS standalone vertex. */
@@ -2752,7 +2752,7 @@ static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
 {
         /* Get the mother's pid. */
         enum ent_pid pid;
-        if ((process == ENT_PROCESS_DIS_NC) || (context->ancester == NULL))
+        if ((process == ENT_PROCESS_DIS_NC) || (context->ancestor == NULL))
                 pid = state->pid;
         else {
                 pid = abs(state->pid) + 1;
@@ -2772,7 +2772,7 @@ static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
         *proget = (context->random(context) < cs_p / (cs_p + cs_n)) ? proget_p :
                                                                       proget_n;
 
-        if (context->ancester != NULL) {
+        if (context->ancestor != NULL) {
                 /* Update the BMC weight. */
                 const double cs = (*proget == proget_p) ? cs_p : cs_n;
                 state->weight *= (cs_p + cs_n) / cs;
@@ -2836,16 +2836,16 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
     struct ent_medium * medium, double density, enum ent_process process,
     struct ent_state * product, enum proget_index * proget_)
 {
-        /* Get the ancester, the process and the target. */
-        enum ent_pid ancester;
+        /* Get the ancestor, the process and the target. */
+        enum ent_pid ancestor;
         int proget;
         if (process == ENT_PROCESS_NONE) {
-                /* Randomise the ancester, the process and the target if no
+                /* Randomise the ancestor, the process and the target if no
                  * clue has been provided.
                  */
                 enum ent_return rc;
-                if ((rc = transport_ancester_draw(physics, context, state,
-                         medium, density, &ancester, &proget)) !=
+                if ((rc = transport_ancestor_draw(physics, context, state,
+                         medium, density, &ancestor, &proget)) !=
                     ENT_RETURN_SUCCESS)
                         return rc;
         } else if ((process == ENT_PROCESS_DIS_CC) ||
@@ -2878,15 +2878,15 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                             physics, state->energy, &cs0, &cs1, &p1, &p2);
 
                         int proget_v[6] = { -1, -1, -1, -1, -1, -1 };
-                        int ancester_v[6] = { -1, -1, -1, -1, -1, -1 };
+                        int ancestor_v[6] = { -1, -1, -1, -1, -1, -1 };
                         double p[6] = { 0., 0., 0., 0., 0., 0. };
                         int np = 0;
-                        ancester_electron_elastic(context, state, 1., &np,
-                            proget_v, p, ancester_v, mode, cs0, cs1, p1, p2);
+                        ancestor_electron_elastic(context, state, 1., &np,
+                            proget_v, p, ancestor_v, mode, cs0, cs1, p1, p2);
 
                         enum ent_return rc;
-                        if ((rc = ancester_draw(context, state, np, proget_v, p,
-                                 ancester_v, &ancester, &proget)) !=
+                        if ((rc = ancestor_draw(context, state, np, proget_v, p,
+                                 ancestor_v, &ancestor, &proget)) !=
                             ENT_RETURN_SUCCESS)
                                 return rc;
                 } else
@@ -2904,15 +2904,15 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                             physics, state->energy, &cs0, &cs1, &p1, &p2);
 
                         int proget_v[2] = { -1, -1 };
-                        int ancester_v[2] = { -1, -1 };
+                        int ancestor_v[2] = { -1, -1 };
                         double p[2] = { 0., 0. };
                         int np = 0;
-                        ancester_muon_inverse(context, state, 1., &np, proget_v,
-                            p, ancester_v, mode, cs0, cs1, p1, p2);
+                        ancestor_muon_inverse(context, state, 1., &np, proget_v,
+                            p, ancestor_v, mode, cs0, cs1, p1, p2);
 
                         enum ent_return rc;
-                        if ((rc = ancester_draw(context, state, np, proget_v, p,
-                                 ancester_v, &ancester, &proget)) !=
+                        if ((rc = ancestor_draw(context, state, np, proget_v, p,
+                                 ancestor_v, &ancestor, &proget)) !=
                             ENT_RETURN_SUCCESS)
                                 return rc;
                 } else
@@ -2930,15 +2930,15 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                             physics, state->energy, &cs0, &cs1, &p1, &p2);
 
                         int proget_v[2] = { -1, -1 };
-                        int ancester_v[2] = { -1, -1 };
+                        int ancestor_v[2] = { -1, -1 };
                         double p[2] = { 0., 0. };
                         int np = 0;
-                        ancester_tau_inverse(context, state, 1., &np, proget_v,
-                            p, ancester_v, mode, cs0, cs1, p1, p2);
+                        ancestor_tau_inverse(context, state, 1., &np, proget_v,
+                            p, ancestor_v, mode, cs0, cs1, p1, p2);
 
                         enum ent_return rc;
-                        if ((rc = ancester_draw(context, state, np, proget_v, p,
-                                 ancester_v, &ancester, &proget)) !=
+                        if ((rc = ancestor_draw(context, state, np, proget_v, p,
+                                 ancestor_v, &ancestor, &proget)) !=
                             ENT_RETURN_SUCCESS)
                                 return rc;
                 } else
@@ -2966,10 +2966,10 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                 state->weight *= cs / (cs_p + cs_n);
         }
 
-        /* Apply any biasing weight for the ancester and for the process
+        /* Apply any biasing weight for the ancestor and for the process
          * randomisation.
          *
-         * N.B.: if the ancester is a muon or a tau the only possible source
+         * N.B.: if the ancestor is a muon or a tau the only possible source
          * process is a decay. Hence p_true = 1. and there is no need to further
          * correct the BMC weight.
          */
@@ -3005,7 +3005,7 @@ enum ent_return ent_vertex(struct ent_physics * physics,
         if (medium->A < medium->Z) ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
 
         /* Process the vertex. */
-        if (context->ancester == NULL)
+        if (context->ancestor == NULL)
                 ENT_RETURN(vertex_forward(
                     physics, context, state, medium, process, product));
         else
@@ -3098,7 +3098,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
         if ((event_ == ENT_EVENT_LIMIT_GRAMMAGE) &&
             (foreseen == ENT_EVENT_NONE)) {
                 event_ = ENT_EVENT_INTERACTION;
-                if (context->ancester == NULL) {
+                if (context->ancestor == NULL) {
                         /* This is a forward transport. Let us randomise the
                          * interaction process and the target.
                          */
@@ -3115,7 +3115,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                         }
                 } else {
                         /* This is a backward transport. First let us randomise
-                         * the ancester and the source process.
+                         * the ancestor and the source process.
                          */
                         enum proget_index proget;
                         rc = vertex_backward(physics, context, state, medium,
@@ -3126,7 +3126,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
                          */
                         double X0;
                         if (proget >= PROGET_CC_NU_NEUTRON) {
-                                /* The ancester is a neutrino. Let us apply
+                                /* The ancestor is a neutrino. Let us apply
                                  * a flux like boundary condition at the vertex.
                                  */
                                 if ((rc = transport_cross_section(physics,
