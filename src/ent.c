@@ -1739,8 +1739,10 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
             cross_section_compute(mode, proget, csl, csh, pl, ph);
         const double pdf1 = dcs1 / cs1;
 
-        /* Update the BMC weight. */
-        state->weight *= pdf1 / (pdf0 * (1. - y));
+        /* Check and update the BMC weight. */
+        const double w = pdf1 / (pdf0 * (1. - y));
+        if (w <= 0.) return ENT_RETURN_DOMAIN_ERROR;
+        state->weight *= w;
 
         return ENT_RETURN_SUCCESS;
 }
@@ -2208,9 +2210,14 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                 /* Sample the energy loss. */
                 enum ent_return rc;
                 double Enu, Q2;
-                if ((rc = backward_sample_EQ2(physics, context, state, proget,
-                         &Enu, &Q2)) != ENT_RETURN_SUCCESS)
-                        return rc;
+                const int ntrials = 20;
+                int i;
+                for (i = 0; i < ntrials; i++) {
+                        if ((rc = backward_sample_EQ2(physics, context, state,
+                                 proget, &Enu, &Q2)) == ENT_RETURN_SUCCESS)
+                                break;
+                }
+                if (rc != ENT_RETURN_SUCCESS) return rc;
 
                 /* Backup the initial state. */
                 if (product != NULL) memcpy(product, state, sizeof(*product));
@@ -2571,7 +2578,7 @@ static enum ent_return transport_ancester_draw(struct ent_physics * physics,
                                 proget_v[2] = PROGET_ELASTIC_NU_MU;
                         else
                                 proget_v[2] = PROGET_ELASTIC_NU_TAU;
-                        if (daughter->pid > 0) proget_v[2]++;
+                        if (daughter->pid < 0) proget_v[2]++;
                         p[2] = p[1] +
                             rho0 * Z * cross_section_compute(
                                            mode, proget_v[2], cs0, cs1, p1, p2);
