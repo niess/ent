@@ -1323,6 +1323,7 @@ static enum ent_return transport_step(struct ent_context * context,
         /* Check the new medium. */
         struct ent_medium * medium1;
         double step1 = context->medium(context, state, &medium1);
+        if (step1 > 0.) step1 += 0.5 * STEP_MIN;
         double ds_boundary = 0.;
         if (*medium == NULL) {
                 /* initialisation step. */
@@ -1332,35 +1333,53 @@ static enum ent_return transport_step(struct ent_context * context,
                         return ENT_RETURN_SUCCESS;
                 }
         } else if ((*medium != NULL) && (medium1 != *medium)) {
-                /* A change of medium occured. Let's locate the interface
-                 * by dichotomy.
+                /* A change of medium occured. First let us check for an exact
+                 * boundary.
                  */
                 double pi[3];
                 memcpy(pi, state->position, sizeof(pi));
-                double s1 = 0., s2 = -(*step);
-                while (fabs(s1 - s2) > STEP_MIN) {
-                        double s3 = 0.5 * (s1 + s2);
-                        state->position[0] =
-                            pi[0] + s3 * sgn * state->direction[0];
-                        state->position[1] =
-                            pi[1] + s3 * sgn * state->direction[1];
-                        state->position[2] =
-                            pi[2] + s3 * sgn * state->direction[2];
-                        struct ent_medium * tmp_medium;
-                        const double tmp_step =
-                            context->medium(context, state, &tmp_medium);
-                        if (tmp_medium == *medium) {
-                                s2 = s3;
-                        } else {
-                                s1 = s3;
-                                step1 = tmp_step;
-                                if (tmp_medium != medium1) medium1 = tmp_medium;
-                        }
-                }
+                double s1 = 0., s2 = -STEP_MIN;
                 state->position[0] = pi[0] + s2 * sgn * state->direction[0];
                 state->position[1] = pi[1] + s2 * sgn * state->direction[1];
                 state->position[2] = pi[2] + s2 * sgn * state->direction[2];
-                *step += s1;
+                struct ent_medium * tmp_medium;
+                const double tmp_step =
+                    context->medium(context, state, &tmp_medium);
+                if (tmp_medium != *medium) {
+                        /* Let us locate the interface by dichotomy. */
+                        step1 = tmp_step;
+                        if (step1 > 0.) step1 += 0.5 * STEP_MIN;
+                        if (tmp_medium != medium1) medium1 = tmp_medium;
+                        s1 = s2;
+                        s2 = -(*step);
+                        while (fabs(s1 - s2) > STEP_MIN) {
+                                double s3 = 0.5 * (s1 + s2);
+                                state->position[0] =
+                                    pi[0] + s3 * sgn * state->direction[0];
+                                state->position[1] =
+                                    pi[1] + s3 * sgn * state->direction[1];
+                                state->position[2] =
+                                    pi[2] + s3 * sgn * state->direction[2];
+                                const double tmp_step = context->medium(
+                                    context, state, &tmp_medium);
+                                if (tmp_medium == *medium) {
+                                        s2 = s3;
+                                } else {
+                                        s1 = s3;
+                                        step1 = tmp_step;
+                                        if (step1 > 0.) step1 += 0.5 * STEP_MIN;
+                                        if (tmp_medium != medium1)
+                                                medium1 = tmp_medium;
+                                }
+                        }
+                        state->position[0] =
+                            pi[0] + s2 * sgn * state->direction[0];
+                        state->position[1] =
+                            pi[1] + s2 * sgn * state->direction[1];
+                        state->position[2] =
+                            pi[2] + s2 * sgn * state->direction[2];
+                        *step += s1;
+                }
                 ds_boundary = s1 - s2;
         }
 
