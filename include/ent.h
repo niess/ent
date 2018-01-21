@@ -238,7 +238,7 @@ typedef double ent_medium_cb(struct ent_context * context,
  * callback is thread safe, e.g. by using independant streams for each context
  * or a locking mechanism in order to share a single random stream.
  */
-typedef double(ent_random_cb)(struct ent_context * context);
+typedef double ent_random_cb(struct ent_context * context);
 
 /**
  * Callback providing an a priori relative density of ancestors.
@@ -256,8 +256,26 @@ typedef double(ent_random_cb)(struct ent_context * context);
  * **Warning** : if multiple contexts are used the user must ensure that this
  * callback is thread safe.
  */
-typedef double(ent_ancestor_cb)(struct ent_context * context,
+typedef double ent_ancestor_cb(struct ent_context * context,
     enum ent_pid ancestor, struct ent_state * daughter);
+
+/**
+ * Callback for custom actions during the Monte-Carlo stepping.
+ *
+ * @param context    The operating Monte-Carlo context.
+ * @param medium     The medium at the current step.
+ * @param state      The particle state at the current step.
+ * @return On success `ENT_RETURN_SUCCESS` must be returned otherwise any error
+ * code can be returned.
+ *
+ * Providing this callback is optionnal. It is called at the end of major
+ * Monte-Carlo steps when invoking `ent_transport`.
+ *
+ * **Warning** : if multiple contexts are used the user must ensure that this
+ * callback is thread safe.
+ */
+typedef enum ent_return ent_stepping_cb(struct ent_context * context,
+    struct ent_medium * medium, struct ent_state * state);
 
 /**
  * Data for a Monte-Carlo context.
@@ -272,6 +290,8 @@ struct ent_context {
         ent_random_cb * random;
         /** The ancestor callback, or `NULL` for forward Monte-Carlo. */
         ent_ancestor_cb * ancestor;
+        /** A custom stepping action callback, or `NULL` if none. */
+        ent_stepping_cb * stepping_action;
         /** A user supplied distance limit for the transport, or `0`. */
         double distance_max;
         /** A user supplied grammage limit for the transport, or `0`. */

@@ -299,8 +299,9 @@ static enum ent_return file_get_line_(struct file_buffer ** buffer, int skip)
                         if (ptr[size - 1] == check) break;
 
                         /* Get more memory then ... */
-                        void * tmp = realloc(*buffer, sizeof(**buffer) +
-                                (*buffer)->size + FILE_BLOCK_SIZE);
+                        void * tmp = realloc(*buffer,
+                            sizeof(**buffer) + (*buffer)->size +
+                                FILE_BLOCK_SIZE);
                         if (tmp == NULL) return ENT_RETURN_MEMORY_ERROR;
                         *buffer = tmp;
                         ptr = (*buffer)->line + (*buffer)->size - 1;
@@ -818,10 +819,10 @@ static double dcs_integrate(struct ent_physics * physics,
                         for (j = 0; j < nx * N_GQ; j++) {
                                 const double x = xmin *
                                     exp((0.5 + 0.5 * xGQ[j % N_GQ] + j / N_GQ) *
-                                                     dlx);
+                                        dlx);
                                 J += wGQ[j % N_GQ] * x *
                                     dcs_compute(physics, projectile, energy, Z,
-                                         A, process, x, y);
+                                        A, process, x, y);
                         }
                         I += wGQ[i % N_GQ] * y * J;
                 }
@@ -842,9 +843,9 @@ static double dcs_integrate(struct ent_physics * physics,
                 for (i = 0; i < ny * N_GQ; i++) {
                         const double y = ymin *
                             exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dly);
-                        I += wGQ[i % N_GQ] * y * dcs_compute(physics,
-                                                     projectile, energy, Z, A,
-                                                     process, 0., y);
+                        I += wGQ[i % N_GQ] * y *
+                            dcs_compute(physics, projectile, energy, Z, A,
+                                process, 0., y);
                 }
 
                 const double y1min = mu / energy;
@@ -853,9 +854,9 @@ static double dcs_integrate(struct ent_physics * physics,
                 for (i = 0; i < ny * N_GQ; i++) {
                         const double y1 = y1min *
                             exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dly1);
-                        I1 += wGQ[i % N_GQ] * y1 * dcs_compute(physics,
-                                                       projectile, energy, Z, A,
-                                                       process, 0., 1. - y1);
+                        I1 += wGQ[i % N_GQ] * y1 *
+                            dcs_compute(physics, projectile, energy, Z, A,
+                                process, 0., 1. - y1);
                 }
 
                 return 0.5 * (I * dly + I1 * dly1);
@@ -1219,16 +1220,18 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
                         if ((rc = proget_compute(projectile, ENT_PID_PROTON,
                                  process, &proget)) != ENT_RETURN_SUCCESS)
                                 ENT_RETURN(rc);
-                        *cross_section += Z * cross_section_compute(mode,
-                                                  proget, cs0, cs1, p1, p2);
+                        *cross_section += Z *
+                            cross_section_compute(
+                                mode, proget, cs0, cs1, p1, p2);
                 }
                 const double N = A - Z;
                 if (N > 0.) {
                         if ((rc = proget_compute(projectile, ENT_PID_NEUTRON,
                                  process, &proget)) != ENT_RETURN_SUCCESS)
                                 ENT_RETURN(rc);
-                        *cross_section += N * cross_section_compute(mode,
-                                                  proget, cs0, cs1, p1, p2);
+                        *cross_section += N *
+                            cross_section_compute(
+                                mode, proget, cs0, cs1, p1, p2);
                 }
         } else {
                 int proget;
@@ -1236,12 +1239,13 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
                          &proget)) != ENT_RETURN_SUCCESS)
                         ENT_RETURN(rc);
                 if (proget < PROGET_N - 1) {
-                        *cross_section = Z * cross_section_compute(mode, proget,
-                                                 cs0, cs1, p1, p2);
+                        *cross_section = Z *
+                            cross_section_compute(
+                                mode, proget, cs0, cs1, p1, p2);
                 } else {
                         *cross_section = Z *
-                            cross_section_compute(mode, PROGET_N - 2, cs0, cs1,
-                                             p1, p2) *
+                            cross_section_compute(
+                                mode, PROGET_N - 2, cs0, cs1, p1, p2) *
                             (ENT_WIDTH_W / ENT_WIDTH_W_TO_MUON - 1.);
                 }
         }
@@ -1413,11 +1417,12 @@ static enum ent_return transport_step(struct ent_context * context,
                         if (fabs(drho) < 1E-03) {
                                 ds = 2. * dX / (density1 + *density) - *step;
                         } else {
-                                ds = *step * ((sqrt(density1 * density1 +
-                                                   2. * dX * drho / *step) -
-                                                  density1) /
-                                                     drho -
-                                                 1.);
+                                ds = *step *
+                                    ((sqrt(density1 * density1 +
+                                          2. * dX * drho / *step) -
+                                         density1) /
+                                            drho -
+                                        1.);
                         }
                         state->grammage = grammage_max;
                         state->position[0] += ds * sgn * state->direction[0];
@@ -1445,6 +1450,8 @@ static enum ent_return transport_step(struct ent_context * context,
         if ((step2 > 0.) && ((step1 <= 0.) || (step2 < step1))) step1 = step2;
         *step = (step1 < 0) ? 0. : step1;
         *density = density1;
+        if (*medium == NULL)
+                *event = ENT_EVENT_EXIT;
         return ENT_RETURN_SUCCESS;
 
 #undef STEP_MIN
@@ -2015,26 +2022,26 @@ static void transport_rotate(
         const double a2 = fabs(direction[2]);
         if (a0 > a1) {
                 if (a0 > a2) {
-                        const double nrm =
-                            1. / sqrt(direction[0] * direction[0] +
-                                     direction[2] * direction[2]);
+                        const double nrm = 1. /
+                            sqrt(direction[0] * direction[0] +
+                                direction[2] * direction[2]);
                         u0x = -direction[2] * nrm, u0z = direction[0] * nrm;
                 } else {
-                        const double nrm =
-                            1. / sqrt(direction[1] * direction[1] +
-                                     direction[2] * direction[2]);
+                        const double nrm = 1. /
+                            sqrt(direction[1] * direction[1] +
+                                direction[2] * direction[2]);
                         u0y = direction[2] * nrm, u0z = -direction[1] * nrm;
                 }
         } else {
                 if (a1 > a2) {
-                        const double nrm =
-                            1. / sqrt(direction[0] * direction[0] +
-                                     direction[1] * direction[1]);
+                        const double nrm = 1. /
+                            sqrt(direction[0] * direction[0] +
+                                direction[1] * direction[1]);
                         u0x = direction[1] * nrm, u0y = -direction[0] * nrm;
                 } else {
-                        const double nrm =
-                            1. / sqrt(direction[1] * direction[1] +
-                                     direction[2] * direction[2]);
+                        const double nrm = 1. /
+                            sqrt(direction[1] * direction[1] +
+                                direction[2] * direction[2]);
                         u0y = direction[2] * nrm, u0z = -direction[1] * nrm;
                 }
         }
@@ -2453,8 +2460,9 @@ static void ancestor_likeliness_fill(struct ent_context * context,
                         proget_v[*np] = proget[i];
                         const double p0 = (*np > 0) ? p[*np - 1] : 0.;
                         p[*np] = p0 +
-                            rho0 * Z * cross_section_compute(
-                                           mode, proget[i], cs0, cs1, p1, p2);
+                            rho0 * Z *
+                                cross_section_compute(
+                                    mode, proget[i], cs0, cs1, p1, p2);
                         ancestor_v[(*np)++] = pid[i];
                 }
         }
@@ -2584,11 +2592,13 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                             PROGET_NC_NU_NEUTRON :
                             PROGET_NC_NU_BAR_NEUTRON;
                         proget_v[1] = proget_v[0] + 4;
-                        p[0] = rho0 * N * cross_section_compute(mode,
-                                              proget_v[0], cs0, cs1, p1, p2);
+                        p[0] = rho0 * N *
+                            cross_section_compute(
+                                mode, proget_v[0], cs0, cs1, p1, p2);
                         p[1] = p[0] +
-                            rho0 * Z * cross_section_compute(
-                                           mode, proget_v[1], cs0, cs1, p1, p2);
+                            rho0 * Z *
+                                cross_section_compute(
+                                    mode, proget_v[1], cs0, cs1, p1, p2);
 
                         /* Elastic event on an atomic electron. */
                         if (apid == ENT_PID_NU_E)
@@ -2599,8 +2609,9 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                 proget_v[2] = PROGET_ELASTIC_NU_TAU;
                         if (daughter->pid < 0) proget_v[2]++;
                         p[2] = p[1] +
-                            rho0 * Z * cross_section_compute(
-                                           mode, proget_v[2], cs0, cs1, p1, p2);
+                            rho0 * Z *
+                                cross_section_compute(
+                                    mode, proget_v[2], cs0, cs1, p1, p2);
 
                         ancestor_v[np++] = daughter->pid;
                         ancestor_v[np++] = daughter->pid;
@@ -2651,9 +2662,9 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                 proget_v[np] = PROGET_INVERSE_NU_MU_MU;
                                 const double p0 = (np > 0) ? p[np - 1] : 0.;
                                 p[np] = p0 +
-                                    rho0 * Z * cross_section_compute(mode,
-                                                   proget_v[np], cs0, cs1, p1,
-                                                   p2);
+                                    rho0 * Z *
+                                        cross_section_compute(mode,
+                                            proget_v[np], cs0, cs1, p1, p2);
                                 ancestor_v[np++] = ENT_PID_NU_MU;
                         }
                         const double rho1 = context->ancestor(
@@ -2662,9 +2673,9 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                 proget_v[np] = PROGET_INVERSE_NU_TAU_TAU;
                                 const double p0 = (np > 0) ? p[np - 1] : 0.;
                                 p[np] = p0 +
-                                    rho1 * Z * cross_section_compute(mode,
-                                                   proget_v[np], cs0, cs1, p1,
-                                                   p2);
+                                    rho1 * Z *
+                                        cross_section_compute(mode,
+                                            proget_v[np], cs0, cs1, p1, p2);
                                 ancestor_v[np++] = ENT_PID_NU_TAU;
                         }
                 } else if ((daughter->pid == ENT_PID_NU_BAR_MU) ||
@@ -2678,9 +2689,9 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                     PROGET_INVERSE_NU_BAR_E_TAU;
                                 const double p0 = (np > 0) ? p[np - 1] : 0.;
                                 p[np] = p0 +
-                                    rho0 * Z * cross_section_compute(mode,
-                                                   proget_v[np], cs0, cs1, p1,
-                                                   p2);
+                                    rho0 * Z *
+                                        cross_section_compute(mode,
+                                            proget_v[np], cs0, cs1, p1, p2);
                                 ancestor_v[np++] = ENT_PID_NU_BAR_E;
                         }
                 }
@@ -2694,11 +2705,13 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                             PROGET_CC_NU_NEUTRON :
                             PROGET_CC_NU_BAR_NEUTRON;
                         proget_v[1] = proget_v[0] + 4;
-                        p[0] = rho0 * N * cross_section_compute(mode,
-                                              proget_v[0], cs0, cs1, p1, p2);
+                        p[0] = rho0 * N *
+                            cross_section_compute(
+                                mode, proget_v[0], cs0, cs1, p1, p2);
                         p[1] = p[0] +
-                            rho0 * Z * cross_section_compute(
-                                           mode, proget_v[1], cs0, cs1, p1, p2);
+                            rho0 * Z *
+                                cross_section_compute(
+                                    mode, proget_v[1], cs0, cs1, p1, p2);
 
                         ancestor_v[np++] = npid;
                         ancestor_v[np++] = npid;
@@ -2752,10 +2765,9 @@ static enum ent_return vertex_dis_compute(struct ent_physics * physics,
         /* Compute the relevant cross-sections and randomise the
          * target accordingly.
          */
-        *cs_p = (medium->Z > 0.) ?
-            medium->Z *
+        *cs_p = (medium->Z > 0.) ? medium->Z *
                 cross_section_compute(mode, proget_p, cs0, cs1, p1, p2) :
-            0.;
+                                   0.;
         const double N = medium->A - medium->Z;
         *cs_n = (N > 0.) ?
             N * cross_section_compute(mode, proget_n, cs0, cs1, p1, p2) :
@@ -3096,6 +3108,7 @@ enum ent_return ent_transport(struct ent_physics * physics,
         if (step)
                 for (;;) {
                         /* Step until an event occurs. */
+                        struct ent_medium * m = medium;
                         if ((rc = transport_step(context, state, &medium, &step,
                                  &density, Xlim, &event_)) !=
                             ENT_RETURN_SUCCESS)
@@ -3105,12 +3118,29 @@ enum ent_return ent_transport(struct ent_physics * physics,
                                 rc = ENT_RETURN_DOMAIN_ERROR;
                                 goto exit;
                         }
+
+                        /* Call any custom stepping action if a medium
+                         * change occured.
+                         */
+                        if ((context->stepping_action != NULL) &&
+                            (medium != m)) {
+                                if ((rc = context->stepping_action(context,
+                                         medium, state)) != ENT_RETURN_SUCCESS)
+                                        goto exit;
+                        }
                 }
         else {
                 /* This is a uniform medium of infinite extension.
                  * Let's do a single straight step.
                  */
                 event_ = transport_straight(context, state, density, Xlim);
+        }
+
+        /* Call any custom stepping action. */
+        if (context->stepping_action != NULL) {
+                if ((rc = context->stepping_action(context, medium, state)) !=
+                    ENT_RETURN_SUCCESS)
+                        goto exit;
         }
 
         /* Process any interaction. */
