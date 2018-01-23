@@ -76,10 +76,10 @@ int main(int nargc, char * argv[])
         ent_error_handler_set(&handle_error);
 
         /* Create a new Physics environment. */
-        ent_physics_create(&physics, "data/pdf/CT14nnlo_0000.dat");
+        ent_physics_create(&physics, "share/pdf/CT14nlo_0000.dat");
 
         /* Instanciate a new simulation context. */
-        struct ent_context context = { &medium, &random, NULL, depth };
+        struct ent_context context = { &medium, &random, NULL, NULL, depth };
 
         /* Run a batch of Monte-Carlo transports. */
         FILE * stream = fopen("transport.dat", "w+");
