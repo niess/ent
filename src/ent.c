@@ -755,7 +755,7 @@ static double dcs_glashow(
 }
 
 /* Compute the DCS for a given process, projectile and target. */
-double dcs_compute(struct ent_physics * physics, enum ent_pid projectile,
+static double dcs_compute(struct ent_physics * physics, enum ent_pid projectile,
     double energy, double Z, double A, enum ent_process process, double x,
     double y)
 {
@@ -2813,7 +2813,7 @@ static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
 }
 
 /* Vertex randomisation in forward Monte-Carlo. */
-enum ent_return vertex_forward(struct ent_physics * physics,
+static enum ent_return vertex_forward(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
     struct ent_medium * medium, enum ent_process process,
     struct ent_state * product)
