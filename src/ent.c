@@ -3104,6 +3104,13 @@ enum ent_return ent_transport(struct ent_physics * physics,
                 foreseen = ENT_EVENT_LIMIT_GRAMMAGE;
         }
 
+        /* Call any custom stepping action. */
+        if (context->stepping_action != NULL) {
+                if ((rc = context->stepping_action(context, medium, state)) !=
+                    ENT_RETURN_SUCCESS)
+                        goto exit;
+        }
+
         /* Do the stepping. */
         if (step)
                 for (;;) {
