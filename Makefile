@@ -18,4 +18,4 @@ lib/lib%.so: src/%.c include/%.h
 
 bin/example-%: examples/example-%.c lib
 	@mkdir -p bin
-	@gcc -o $@ $(CFLAGS) $(INCLUDE) $< -Llib -lent $(LIBS)
+	@gcc -o $@ $(CFLAGS) $(INCLUDE) $< -Llib -Wl,-rpath,lib -lent $(LIBS)

@@ -43,9 +43,9 @@ enum ent_return {
         ENT_RETURN_FORMAT_ERROR,
         /** Some read /write error occured. */
         ENT_RETURN_IO_ERROR,
-        /** Some memory couldn't be allocated. */
+        /** Some memory could not be allocated. */
         ENT_RETURN_MEMORY_ERROR,
-        /** Some file couldn't be found. */
+        /** Some file could not be found. */
         ENT_RETURN_PATH_ERROR,
         /** The number of return codes. */
         ENT_N_RETURNS
@@ -327,6 +327,7 @@ struct ent_state {
  *
  * @param physics    A handle for the Physics environment.
  * @param pdf        The PDF file(s) to create the set from.
+ * @param cs         A cross-section file, for DIS processes, or `NULL`.
  * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
  * code is returned as detailed below.
  *
@@ -334,16 +335,21 @@ struct ent_state {
  * Particle Physics and according to the given tabulations of Parton
  * Distribution Functions (PDF).
  *
+ * If *cs* is not `NULL`, then it must point to file containing cross-section
+ * values for DIS processes. ENT's cross-sections are re-scaled accordingly.
+ * Otherwise, ENT's cross-sections for DIS processes are computed from the
+ * provided PDF using LO expressions.
+ *
  * __Error codes__
  *
- *     ENT_RETURN_FORMAT_ERROR    The pdf file format is not valid / supported.
+ *     ENT_RETURN_FORMAT_ERROR    An input file format is not valid / supported.
  *
- *     ENT_RETURN_MEMORY_ERROR    Couldn't allocate memory.
+ *     ENT_RETURN_MEMORY_ERROR    Could not allocate memory.
  *
- *     ENT_RETURN_PATH_ERROR      The pdf file couldn't be found/opened.
+ *     ENT_RETURN_PATH_ERROR      An input file could not be found/opened.
  */
 enum ent_return ent_physics_create(
-    struct ent_physics ** physics, const char * pdf);
+    struct ent_physics ** physics, const char * pdf, const char * cs);
 
 /**
  * Destroy a Physics environment.

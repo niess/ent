@@ -1030,9 +1030,54 @@ static void physics_tabulate_dis(struct ent_physics * physics)
         }
 }
 
+/* Load DIS cross-sections from a text file. */
+static enum ent_return cs_load(FILE * stream, struct ent_physics * physics)
+{
+#define BUFFER_SIZE 2048
+
+        char buffer[BUFFER_SIZE];
+        int i = 0;
+        double * table = physics->cs;
+        const double re = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
+        while (!feof(stream)) {
+                if (fgets(buffer, BUFFER_SIZE - 1, stream) == NULL)
+                        return ENT_RETURN_FORMAT_ERROR;
+                if (buffer[0] == '#') continue;
+
+                double data[9];
+                const int nread = sscanf(buffer,
+                    "%lf %lf %lf %lf %lf %lf %lf %lf %lf", data, data + 1,
+                    data + 2, data + 3, data + 4, data + 5, data + 6, data + 7,
+                    data + 8);
+                if (nread != 9) return ENT_RETURN_FORMAT_ERROR;
+
+                const double energy = ENERGY_MIN * exp(i * re);
+                if (fabs(data[0] / energy - 1.) > 1E-03)
+                        return ENT_RETURN_FORMAT_ERROR;
+
+                table[PROGET_CC_NU_NEUTRON] = data[2];
+                table[PROGET_NC_NU_NEUTRON] = data[4];
+                table[PROGET_CC_NU_BAR_NEUTRON] = data[6];
+                table[PROGET_NC_NU_BAR_NEUTRON] = data[8];
+
+                table[PROGET_CC_NU_PROTON] = data[1];
+                table[PROGET_NC_NU_PROTON] = data[3];
+                table[PROGET_CC_NU_BAR_PROTON] = data[5];
+                table[PROGET_NC_NU_BAR_PROTON] = data[7];
+
+                table += PROGET_N - 1;
+                i++;
+                if (i == ENERGY_N) break;
+        }
+
+        return ENT_RETURN_SUCCESS;
+
+#undef BUFFER_SIZE
+}
+
 /* API constructor for a Physics object. */
 enum ent_return ent_physics_create(
-    struct ent_physics ** physics, const char * pdf_file)
+    struct ent_physics ** physics, const char * pdf_file, const char * cs_file)
 {
         ENT_ACKNOWLEDGE(ent_physics_create);
 
@@ -1045,12 +1090,24 @@ enum ent_return ent_physics_create(
         if ((stream = fopen(pdf_file, "r")) == NULL) goto exit;
 
         if ((rc = lha_load(stream, physics)) != ENT_RETURN_SUCCESS) goto exit;
-        rc = ENT_RETURN_SUCCESS;
+        fclose(stream);
+        stream = NULL;
 
         /* Build the tabulations. */
+        rc = ENT_RETURN_SUCCESS;
         physics_tabulate_cs(*physics);
         physics_tabulate_dis(*physics);
 
+        if (cs_file != NULL) {
+                /* Load any cross-section table */
+                rc = ENT_RETURN_PATH_ERROR;
+                if ((stream = fopen(cs_file, "r")) == NULL) goto exit;
+
+                if ((rc = cs_load(stream, *physics)) != ENT_RETURN_SUCCESS)
+                    goto exit;
+                fclose(stream);
+                stream = NULL;
+        }
 exit:
         if (stream != NULL) fclose(stream);
         ENT_RETURN(rc);
