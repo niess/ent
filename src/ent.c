@@ -153,15 +153,15 @@ static int memory_padded_size(int size, int pad_size)
 }
 
 /* Generic allocator for a Physics object. */
-static void * physics_create(int extra_size)
+static void * physics_create(void)
 {
-        void * v = malloc(sizeof(struct ent_physics) + extra_size +
+        void * v = malloc(sizeof(struct ent_physics) +
             ((PROGET_N - 1) * ENERGY_N + 8 * DIS_Q2_N * DIS_X_N +
                 8 * (DIS_Q2_N - 1) * (DIS_X_N - 1)) *
                 sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
-        p->cs = (double *)(p->data + extra_size);
+        p->cs = (double *)(p->data);
         p->dis_pdf = p->cs + (PROGET_N - 1) * ENERGY_N;
         p->dis_cdf = p->dis_pdf + 8 * DIS_Q2_N * DIS_X_N;
         return v;
@@ -373,8 +373,10 @@ static void file_get_table(
         }
 }
 
-/* Container for LHAPDFs data. */
+/* Containers for LHAPDFs data. */
 struct lha_pdf {
+        /* Link to the next table. */
+        struct lha_pdf * next;
         /* The table size. */
         int nx, nQ2, nf;
         /* Links to the data tables. */
@@ -383,46 +385,42 @@ struct lha_pdf {
         float data[];
 };
 
-/* Load PDFs from a .dat file in lhagrid1 format. */
-static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
+/* Load a PDF from a .dat file in lhagrid1 format. */
+static enum ent_return lha_load_table(
+    struct file_buffer ** buffer, struct lha_pdf * previous)
 {
 #define LHAPDF_NF_MAX 13
-        *physics = NULL;
-        enum ent_return rc;
-        struct file_buffer * buffer = NULL;
-
-        /* Redirect any subsequent file parsing error. */
-        jmp_buf env;
-        if (setjmp(env) != 0) {
-                rc = buffer->code;
-                goto exit;
-        }
-
-        /* Create the temporary file buffer. */
-        if ((rc = file_buffer_create(&buffer, stream, env)) !=
-            ENT_RETURN_SUCCESS)
-                goto exit;
-
-        /* Locate the data segment. */
+        /* Locate the next data segment. */
         for (;;) {
-                file_get_line(&buffer, 0);
-                if (strlen(buffer->cursor) < 3) continue;
-                if ((buffer->cursor[0] == '-') && (buffer->cursor[1] == '-') &&
-                    (buffer->cursor[2] == '-'))
+                file_get_line(buffer, 0);
+                if (strlen((*buffer)->cursor) < 3) continue;
+                if (((*buffer)->cursor[0] == '-') &&
+                    ((*buffer)->cursor[1] == '-') &&
+                    ((*buffer)->cursor[2] == '-'))
                         break;
         }
-        long int pos = ftell(stream);
+        long int pos = ftell((*buffer)->stream);
+
+        {
+                /* Check for end of file. */
+                char tmp[64];
+                fgets(tmp, 63, (*buffer)->stream);
+                if (feof((*buffer)->stream)) {
+                        return ENT_RETURN_SUCCESS;
+                } else if (fseek((*buffer)->stream, pos, SEEK_SET) != 0) {
+                        return ENT_RETURN_IO_ERROR;
+                }
+        }
 
         /* Parse the table format. */
-        file_get_line(&buffer, 0);
-        const int nx = file_count_words(buffer);
-        file_get_line(&buffer, 0);
-        const int nQ = file_count_words(buffer);
-        file_get_line(&buffer, 0);
-        const int nf = file_count_words(buffer);
+        file_get_line(buffer, 0);
+        const int nx = file_count_words(*buffer);
+        file_get_line(buffer, 0);
+        const int nQ = file_count_words(*buffer);
+        file_get_line(buffer, 0);
+        const int nf = file_count_words(*buffer);
         if ((nf != LHAPDF_NF_MAX - 2) && (nf != LHAPDF_NF_MAX)) {
-                rc = ENT_RETURN_FORMAT_ERROR;
-                goto exit;
+                return ENT_RETURN_FORMAT_ERROR;
         }
 
         /* Allocate and map the memory for the tables. */
@@ -436,12 +434,13 @@ static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
             memory_padded_size(nf * nx * nQ * sizeof(float), sizeof(double));
         unsigned int size =
             sizeof(struct lha_pdf) + size_x + size_Q + size_lambda + size_xfx;
-        if ((*physics = physics_create(size)) == NULL) {
-                rc = ENT_RETURN_MEMORY_ERROR;
-                goto exit;
+        struct lha_pdf * pdf;
+        if ((pdf = malloc(size)) == NULL) {
+                return ENT_RETURN_MEMORY_ERROR;
         }
-        (*physics)->pdf = (struct lha_pdf *)(*physics)->data;
-        struct lha_pdf * const pdf = (*physics)->pdf;
+        pdf->next = NULL;
+        previous->next = pdf;
+
         pdf->nx = nx;
         pdf->nQ2 = nQ;
         pdf->nf = (nf - 1) / 2;
@@ -451,17 +450,16 @@ static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
         pdf->xfx = (float *)((char *)pdf->lambda + size_lambda);
 
         /* Roll back in the file and copy the data to memory. */
-        if (fseek(stream, pos, SEEK_SET) != 0) {
-                rc = ENT_RETURN_IO_ERROR;
-                goto exit;
+        if (fseek((*buffer)->stream, pos, SEEK_SET) != 0) {
+                return ENT_RETURN_IO_ERROR;
         }
-        file_get_line(&buffer, 0);
+        file_get_line(buffer, 0);
 
         float row[LHAPDF_NF_MAX];
         int index[LHAPDF_NF_MAX];
-        file_get_table(&buffer, nx, pdf->x);
-        file_get_table(&buffer, nQ, pdf->Q2);
-        file_get_table(&buffer, nf, row);
+        file_get_table(buffer, nx, pdf->x);
+        file_get_table(buffer, nQ, pdf->Q2);
+        file_get_table(buffer, nf, row);
 
         int i;
         for (i = 0; i < nQ; i++) pdf->Q2[i] *= pdf->Q2[i];
@@ -471,25 +469,23 @@ static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
                 else
                         index[i] = (int)row[i] + pdf->nf;
                 if ((index[i] < 0) || (index[i] >= nf)) {
-                        rc = ENT_RETURN_FORMAT_ERROR;
-                        goto exit;
+                        return ENT_RETURN_FORMAT_ERROR;
                 }
         }
 
         float * table;
         for (i = 0, table = pdf->xfx; i < nx * nQ; i++, table += nf) {
                 int j;
-                file_get_table(&buffer, nf, row);
+                file_get_table(buffer, nf, row);
                 for (j = 0; j < nf; j++) table[index[j]] = row[j];
         }
 
         /* Tabulate the lambda exponents for the small x extrapolation. */
         memset(pdf->lambda, 0x0, size_lambda);
-        if (pdf->x[0] <= 0.) goto exit;
+        if (pdf->x[0] <= 0.) return ENT_RETURN_SUCCESS;
         float lxi = log(pdf->x[1] / pdf->x[0]);
         if (lxi <= 0.) {
-                rc = ENT_RETURN_FORMAT_ERROR;
-                goto exit;
+                return ENT_RETURN_FORMAT_ERROR;
         }
         lxi = 1. / lxi;
         for (i = 0, table = pdf->lambda; i < nQ; i++, table += nf) {
@@ -504,9 +500,59 @@ static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
                 }
         }
 
+        return ENT_RETURN_SUCCESS;
+}
+
+/* Load all PDFs from a .dat file in lhagrid1 format. */
+static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
+{
+#define LHAPDF_NF_MAX 13
+        *physics = NULL;
+        enum ent_return rc;
+        struct file_buffer * buffer = NULL;
+        struct lha_pdf head = {
+                .next = NULL
+        };
+
+        /* Redirect any subsequent file parsing error. */
+        jmp_buf env;
+        if (setjmp(env) != 0) {
+                rc = buffer->code;
+                goto exit;
+        }
+
+        /* Create the temporary file buffer. */
+        if ((rc = file_buffer_create(&buffer, stream, env)) !=
+            ENT_RETURN_SUCCESS)
+                goto exit;
+
+        /* Load the PDF set(s). */
+        struct lha_pdf * pdf;
+        for (pdf = &head; pdf != NULL; pdf = pdf->next) {
+                if ((rc = lha_load_table(&buffer, pdf)) != ENT_RETURN_SUCCESS)
+                        goto exit;
+        }
+        if (head.next == NULL) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto exit;
+        }
+
+        /* Create the physics wrapper. */
+        *physics = physics_create();
+        if (*physics == NULL) {
+                rc = ENT_RETURN_MEMORY_ERROR;
+        } else {
+                (*physics)->pdf = head.next;
+        }
 exit:
         free(buffer);
         if (rc != ENT_RETURN_SUCCESS) {
+                struct lha_pdf * p = head.next;
+                while (p != NULL) {
+                        struct lha_pdf * next = p->next;
+                        free(p);
+                        p = next;
+                }
                 free(*physics);
                 *physics = NULL;
         }
@@ -530,9 +576,11 @@ static void lha_pdf_compute(
         memset(xfx, 0x0, LHAPDF_NF_MAX * sizeof(*xfx));
 
         /* Check the bounds. */
-        if ((Q2 < pdf->Q2[0]) || (Q2 >= pdf->Q2[pdf->nQ2 - 1]) ||
-            (x >= pdf->x[pdf->nx - 1]))
-                return;
+        while ((Q2 < pdf->Q2[0]) || (Q2 >= pdf->Q2[pdf->nQ2 - 1]) ||
+            (x >= pdf->x[pdf->nx - 1])) {
+                pdf = pdf->next;
+                if (pdf == NULL) return;
+        }
 
         if (x < pdf->x[0]) {
                 /* Extrapolate with a power law for small x values, i.e.
@@ -901,18 +949,28 @@ static void physics_tabulate_cs(struct ent_physics * physics)
 /* Tabulate the PDF and CDF for DIS events. */
 static void physics_tabulate_dis(struct ent_physics * physics)
 {
+        /* Compute the table(s) bounds. */
+        double xmin = DBL_MAX, xmax = -DBL_MAX;
+        double Q2min = DBL_MAX, Q2max = -DBL_MAX;
+        {
+                struct lha_pdf * p;
+                for (p = physics->pdf; p != NULL; p = p->next) {
+                        if (p->x[0] < xmin) xmin = p->x[0];
+                        if (p->Q2[0] < Q2min) Q2min = p->Q2[0];
+                        const double tmp0 = p->x[p->nx - 1];
+                        if (tmp0 > xmax) xmax = tmp0;
+                        const double tmp1 = p->Q2[p->nQ2 - 1];
+                        if (tmp1 > Q2max) Q2max = tmp1;
+                }
+        }
+
         /* Compute the sampling factors. */
         physics->dis_xmin = 1. / ENERGY_MAX;
-        if (physics->dis_xmin > physics->pdf->x[0])
-                physics->dis_xmin = physics->pdf->x[0];
-        physics->dis_dlx =
-            log(physics->pdf->x[physics->pdf->nx - 1] / physics->dis_xmin) /
-            (DIS_X_N - 1);
+        if (physics->dis_xmin > xmin) physics->dis_xmin = xmin;
+        physics->dis_dlx = log(xmax / physics->dis_xmin) / (DIS_X_N - 1);
         physics->dis_rx = exp(physics->dis_dlx);
-        physics->dis_Q2min = physics->pdf->Q2[0];
-        physics->dis_dlQ2 =
-            log(physics->pdf->Q2[physics->pdf->nQ2 - 1] / physics->dis_Q2min) /
-            (DIS_Q2_N - 1);
+        physics->dis_Q2min = Q2min;
+        physics->dis_dlQ2 = log(Q2max / physics->dis_Q2min) / (DIS_Q2_N - 1);
         physics->dis_rQ2 = exp(physics->dis_dlQ2);
 
         /* Compute the asymptotic PDF, i.e. y = 1, for the differential
@@ -1099,7 +1157,7 @@ enum ent_return ent_physics_create(
         physics_tabulate_dis(*physics);
 
         if (cs_file != NULL) {
-                /* Load any cross-section table */
+                /* Load any cross-section table. */
                 rc = ENT_RETURN_PATH_ERROR;
                 if ((stream = fopen(cs_file, "r")) == NULL) goto exit;
 
@@ -1117,6 +1175,13 @@ exit:
 void ent_physics_destroy(struct ent_physics ** physics)
 {
         if ((physics == NULL) || (*physics == NULL)) return;
+
+        struct lha_pdf * p = (*physics)->pdf;
+        while (p != NULL) {
+                struct lha_pdf * next = p->next;
+                free(p);
+                p = next;
+        }
 
         free(*physics);
         *physics = NULL;
@@ -1617,7 +1682,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                         const double b = ly0 / physics->dis_dlx;
                         double d = 0.;
                         int i;
-                        for (i = 0; i <= iQ2max; i++) {
+                        for (i = 0; i < iQ2max; i++) {
                                 int jmin = floor(a * i + b);
                                 if (jmin < 0)
                                         jmin = 0;
@@ -1636,7 +1701,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                         iQ2 = ix = 0;
                         r = d * context->random(context);
                         d = 0.;
-                        for (i = 0; i <= iQ2max; i++) {
+                        for (i = 0; i < iQ2max; i++) {
                                 int jmin = floor(a * i + b);
                                 if (jmin < 0)
                                         jmin = 0;
