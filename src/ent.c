@@ -404,8 +404,8 @@ static enum ent_return lha_load_table(
         {
                 /* Check for end of file. */
                 char tmp[64];
-                fgets(tmp, 63, (*buffer)->stream);
-                if (feof((*buffer)->stream)) {
+                if ((fgets(tmp, 63, (*buffer)->stream) == NULL) ||
+                    (feof((*buffer)->stream))) {
                         return ENT_RETURN_SUCCESS;
                 } else if (fseek((*buffer)->stream, pos, SEEK_SET) != 0) {
                         return ENT_RETURN_IO_ERROR;
