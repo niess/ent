@@ -647,22 +647,20 @@ static void lha_pdf_compute(
         }
 }
 
-/* DCS for Deep Inelastic Scattering (DIS) on nucleons. */
-static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
-    double energy, double Z, double A, enum ent_process process, double x,
-    double y)
+/* Compute SFs for DIS. */
+static void dis_compute_sf(struct ent_physics * physics,
+    enum ent_pid projectile, double Z, double A, enum ent_process process,
+    float x, float Q2, double * sf)
 {
         /* Get the PDFs. */
-        const double Q2 = 2. * x * y * ENT_MASS_NUCLEON * energy;
         const struct lha_pdf * const pdf = physics->pdf;
         float xfx[LHAPDF_NF_MAX];
         lha_pdf_compute(pdf, x, Q2, xfx);
 
         /* Compute the relevant structure functions. */
-        const int eps = (projectile > 0) ? 1 : -1; /* CP? */
+        const int eps = (projectile > 0) ? 1 : -1;
         const int nf = pdf->nf;
         const double N = A - Z; /* Number of neutrons. */
-        double factor;
         if (process == ENT_PROCESS_DIS_CC) {
                 /* Charged current DIS process. */
                 const double d = (Z <= 0.) ? 0. : xfx[1 * eps + nf];
@@ -676,11 +674,9 @@ static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
                 const double cbar = xfx[-4 * eps + nf];
                 const double F2 = N * dbar + Z * ubar + A * cbar;
 
-                const double y1 = 1. - y;
-                const double F = F1 + F2 * y1 * y1;
-                const double MW2 = ENT_MASS_W * ENT_MASS_W;
-                const double r = MW2 / (MW2 + Q2);
-                factor = 2 * F * r * r;
+                sf[0] = 2 * F1;
+                sf[1] = 2 * F2;
+                sf[2] = 0.;
         } else {
                 /* Neutral current DIS process. */
                 const double d = xfx[1 * eps + nf];
@@ -694,27 +690,39 @@ static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
                 const double gm2 = 4. * s23 * s23;
                 const double gpp2 = 1. + s23 * (s23 - 2.);
                 const double gpm2 = s23 * s23;
-                const double y1 = 1. - y;
-                const double y12 = y1 * y1;
-                const double F1 = (gp2 + gm2 * y12) * (Z * u + N * d + A * c);
-                const double F2 =
-                    (gpp2 + gpm2 * y12) * (Z * d + N * u + A * (s + b));
+                const double F1 = Z * u + N * d + A * c;
+                const double F2 = Z * d + N * u + A * (s + b);
 
                 const double dbar = xfx[-1 * eps + nf];
                 const double ubar = xfx[-2 * eps + nf];
                 const double sbar = xfx[-3 * eps + nf];
                 const double cbar = xfx[-4 * eps + nf];
                 const double bbar = xfx[-5 * eps + nf];
-                const double F3 =
-                    (gm2 + gp2 * y12) * (Z * ubar + N * dbar + A * cbar);
-                const double F4 = (gpm2 + gpp2 * y12) *
-                    (Z * dbar + N * ubar + A * (sbar + bbar));
+                const double F3 = Z * ubar + N * dbar + A * cbar;
+                const double F4 = Z * dbar + N * ubar + A * (sbar + bbar);
 
-                const double F = F1 + F2 + F3 + F4;
-                const double MZ2 = ENT_MASS_Z * ENT_MASS_Z;
-                const double r = MZ2 / (MZ2 + Q2);
-                factor = 0.5 * F * r * r;
+                sf[0] = 0.5 * (gp2 * F1 + gpp2 * F2 + gm2 * F3 + gpm2 * F4);
+                sf[1] = 0.5 * (gm2 * F1 + gpm2 * F2 + gp2 * F3 + gpp2 * F4);
+                sf[2] = 0.;
         }
+}
+
+/* DCS for Deep Inelastic Scattering (DIS) on nucleons. */
+static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
+    double energy, double Z, double A, enum ent_process process, double x,
+    double y)
+{
+        /* Compute the SFs. */
+        const double Q2 = 2. * x * y * ENT_MASS_NUCLEON * energy;
+        double sf[3];
+        dis_compute_sf(physics, projectile, Z, A, process, x, Q2, sf);
+
+        /* Compute the DCS factor. */
+        const double MX2 = (process == ENT_PROCESS_DIS_CC) ?
+            ENT_MASS_W * ENT_MASS_W : ENT_MASS_Z * ENT_MASS_Z;
+        const double r = MX2 / (MX2 + Q2);
+        const double y1 = 1. - y;
+        const double factor = r * r * (sf[0] + y1 * y1 * sf[1] - y * y * sf[2]);
 
         /* Return the DCS. */
         return energy * factor * (ENT_PHYS_GF * ENT_PHYS_HBC) *
@@ -973,11 +981,10 @@ static void physics_tabulate_dis(struct ent_physics * physics)
         physics->dis_dlQ2 = log(Q2max / physics->dis_Q2min) / (DIS_Q2_N - 1);
         physics->dis_rQ2 = exp(physics->dis_dlQ2);
 
-        /* Compute the asymptotic PDF, i.e. y = 1, for the differential
+        /* Compute the asymptotic PDF, i.e. y = 0, for the differential
          * cross-section as (ln(x), ln(Q2)). The corresponding PDF depends only
          * on (x, Q2) and it provides a majoration of the true DIS PDF.
          */
-        const int nf = physics->pdf->nf;
         const double c =
             (ENT_PHYS_GF * ENT_PHYS_HBC) * (ENT_PHYS_GF * ENT_PHYS_HBC) / M_PI;
         const double MZ2 = ENT_MASS_Z * ENT_MASS_Z;
@@ -995,68 +1002,22 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                 for (ix = 0; ix < DIS_X_N; ix++, pdf++) {
                         const double x =
                             physics->dis_xmin * exp(ix * physics->dis_dlx);
-                        float xfx[LHAPDF_NF_MAX];
-                        lha_pdf_compute(physics->pdf, x, Q2, xfx);
                         int k;
-                        double factor;
                         for (k = 0; k < 8; k++) {
-                                const int eps = (k / 2) % 2 ? -1 : 1;
                                 const double Z = (k / 4);
-                                const double N = 1. - Z;
-                                /* Compute the relevant structure functions. */
-                                if ((k % 2) == 0) {
-                                        /* Charged current DIS process. */
-                                        const double d =
-                                            (Z <= 0.) ? 0. : xfx[1 * eps + nf];
-                                        const double u =
-                                            (N <= 0.) ? 0. : xfx[2 * eps + nf];
-                                        const double s = xfx[3 * eps + nf];
-                                        const double b = xfx[5 * eps + nf];
-                                        const double F1 = Z * d + N * u + s + b;
+                                const double A = 1.;
+                                double sf[3];
+                                enum ent_pid projectile = (k / 2) % 2 ?
+                                    ENT_PID_NU_BAR_E : ENT_PID_NU_E;
+                                enum ent_process process = (k % 2) ?
+                                    ENT_PROCESS_DIS_NC : ENT_PROCESS_DIS_CC;
 
-                                        const double dbar =
-                                            (N <= 0.) ? 0. : xfx[-1 * eps + nf];
-                                        const double ubar =
-                                            (Z <= 0.) ? 0. : xfx[-2 * eps + nf];
-                                        const double cbar = xfx[-4 * eps + nf];
-                                        const double F2 =
-                                            N * dbar + Z * ubar + cbar;
+                                dis_compute_sf(physics, projectile, Z, A,
+                                    process, x, Q2, sf);
+                                const double r =
+                                    (process == ENT_PROCESS_DIS_CC) ? rW : rZ;
+                                const double factor = r * (sf[0] + sf[1]);
 
-                                        factor = (F1 + F2) * rW;
-                                } else {
-                                        /* Neutral current DIS process. */
-                                        const double d = xfx[1 * eps + nf];
-                                        const double u = xfx[2 * eps + nf];
-                                        const double s = xfx[3 * eps + nf];
-                                        const double c = xfx[4 * eps + nf];
-                                        const double b = xfx[5 * eps + nf];
-
-                                        const double s23 =
-                                            2. * ENT_PHYS_SIN_THETA_W_2 / 3.;
-                                        const double gp2 =
-                                            1. + 4. * s23 * (s23 - 1.);
-                                        const double gm2 = 4. * s23 * s23;
-                                        const double gpp2 =
-                                            1. + s23 * (s23 - 2.);
-                                        const double gpm2 = s23 * s23;
-                                        const double F1 =
-                                            (gp2 + gm2) * (Z * u + N * d + c);
-                                        const double F2 = (gpp2 + gpm2) *
-                                            (Z * d + N * u + s + b);
-
-                                        const double dbar = xfx[-1 * eps + nf];
-                                        const double ubar = xfx[-2 * eps + nf];
-                                        const double sbar = xfx[-3 * eps + nf];
-                                        const double cbar = xfx[-4 * eps + nf];
-                                        const double bbar = xfx[-5 * eps + nf];
-                                        const double F3 = (gm2 + gp2) *
-                                            (Z * ubar + N * dbar + cbar);
-                                        const double F4 = (gpm2 + gpp2) *
-                                            (Z * dbar + N * ubar + sbar + bbar);
-
-                                        factor =
-                                            0.25 * (F1 + F2 + F3 + F4) * rZ;
-                                }
                                 pdf[k * DIS_X_N * DIS_Q2_N] = c * factor * Q2;
                         }
                 }
@@ -1766,69 +1727,25 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                 y = Q2 / (x * Q2max);
                 if (y > 1.) continue;
 
-                /* Reject according to the true PDF, i.e. including the
-                 * (1 - y)**2 factor(s). First let us compute the relevant
-                 * structure functions.
+                /* Reject according to the true PDF, i.e. including the y
+                 * factors. First let us compute the relevant structure
+                 * functions.
                  */
-                const int nf = physics->pdf->nf;
-                const int eps = (proget / 2) % 2 ? -1 : 1;
-                const double Z = (proget / 4);
-                const double N = 1. - Z;
-                float xfx[LHAPDF_NF_MAX];
-                lha_pdf_compute(physics->pdf, x, Q2, xfx);
+                const double Z = (proget / 4.);
+                const double A = 1.;
+                enum ent_pid projectile = (proget / 2) % 2 ?
+                    ENT_PID_NU_BAR_E : ENT_PID_NU_E;
+                enum ent_process process = (proget % 2) ?
+                    ENT_PROCESS_DIS_NC : ENT_PROCESS_DIS_CC;
 
-                double factor0, factor1;
-                if ((proget % 2) == 0) {
-                        /* Charged current DIS process. */
-                        const double d = (Z <= 0.) ? 0. : xfx[1 * eps + nf];
-                        const double u = (N <= 0.) ? 0. : xfx[2 * eps + nf];
-                        const double s = xfx[3 * eps + nf];
-                        const double b = xfx[5 * eps + nf];
-                        const double F1 = Z * d + N * u + s + b;
-
-                        const double dbar = (N <= 0.) ? 0. : xfx[-1 * eps + nf];
-                        const double ubar = (Z <= 0.) ? 0. : xfx[-2 * eps + nf];
-                        const double cbar = xfx[-4 * eps + nf];
-                        const double F2 = N * dbar + Z * ubar + cbar;
-
-                        factor0 = F1 + F2;
-                        factor1 = F1 + F2 * (1. - y) * (1. - y);
-                } else {
-                        /* Neutral current DIS process. */
-                        const double d = xfx[1 * eps + nf];
-                        const double u = xfx[2 * eps + nf];
-                        const double s = xfx[3 * eps + nf];
-                        const double c = xfx[4 * eps + nf];
-                        const double b = xfx[5 * eps + nf];
-
-                        const double s23 = 2. * ENT_PHYS_SIN_THETA_W_2 / 3.;
-                        const double gp2 = 1. + 4. * s23 * (s23 - 1.);
-                        const double gm2 = 4. * s23 * s23;
-                        const double gpp2 = 1. + s23 * (s23 - 2.);
-                        const double gpm2 = s23 * s23;
-                        const double y1 = 1. - y;
-                        const double y12 = y1 * y1;
-                        factor0 = (gp2 + gm2) * (Z * u + N * d + c);
-                        factor1 = (gp2 + gm2 * y12) * (Z * u + N * d + c);
-                        factor0 += (gpp2 + gpm2) * (Z * d + N * u + s + b);
-                        factor1 +=
-                            (gpp2 + gpm2 * y12) * (Z * d + N * u + s + b);
-
-                        const double dbar = xfx[-1 * eps + nf];
-                        const double ubar = xfx[-2 * eps + nf];
-                        const double sbar = xfx[-3 * eps + nf];
-                        const double cbar = xfx[-4 * eps + nf];
-                        const double bbar = xfx[-5 * eps + nf];
-                        factor0 += (gm2 + gp2) * (Z * ubar + N * dbar + cbar);
-                        factor1 +=
-                            (gm2 + gp2 * y12) * (Z * ubar + N * dbar + cbar);
-                        factor0 +=
-                            (gpm2 + gpp2) * (Z * dbar + N * ubar + sbar + bbar);
-                        factor1 += (gpm2 + gpp2 * y12) *
-                            (Z * dbar + N * ubar + sbar + bbar);
-                }
+                double sf[3];
+                dis_compute_sf(physics, projectile, Z, A, process, x, Q2, sf);
 
                 /* Then, reject sample accordingly. */
+                const double factor0 = sf[0] + sf[1];
+                const double y1 = 1. - y;
+                const double factor1 = sf[0] + y1 * y1 * sf[1] - y * y * sf[2];
+
                 if (context->random(context) * factor0 <= factor1) break;
         }
 
