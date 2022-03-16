@@ -424,7 +424,9 @@ enum ent_return ent_physics_dcs(struct ent_physics * physics,
 * code is returned as detailed below.
 *
 * Compute the Parton Distribution Function (PDF) for the given _parton_ and
-* kinematic parameters.
+* kinematic parameters. If *parton* equals `ENT_N_PARTONS`, then the whole PDF
+* set is returned, assuming that *pdf* is an array of at least `ENT_N_PARTONS`
+* wide.
 *
 * __Error codes__
 *
@@ -432,6 +434,33 @@ enum ent_return ent_physics_dcs(struct ent_physics * physics,
 */
 enum ent_return ent_physics_pdf(struct ent_physics * physics,
     enum ent_parton parton, double x, double q2, double * value);
+
+/**
+* Compute DIS SFs.
+*
+* @param physics    A handle for the Physics.
+* @param projectile The projectile PID.
+* @param target     The target PID.
+* @param process    The DIS process.
+* @param x          The Bjorken _x_ fraction.
+* @param q2         The squared momentum transfer.
+* @param F2         The F2 SF, or `NULL`.
+* @param F3         The F3 SF, or `NULL`.
+* @param FL         The FL SF, or `NULL`.
+* @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+* code is returned as detailed below.
+*
+* Compute the DIS Structure Functions (SF) for the given projectile, target,
+* process and kinematic parameters. Note that target must be one of
+* `ENT_PID_NEUTRON` or `ENT_PID_PROTON`.
+*
+* __Error codes__
+*
+*     ENT_RETURN_DOMAIN_ERROR     Some input parameter is invalid.
+*/
+enum ent_return ent_physics_dsf(struct ent_physics * physics,
+    enum ent_pid projectile, enum ent_pid target, enum ent_process process,
+    double x, double Q2, double * F2, double * F3, double * FL);
 
 /**
 * Exit events for a neutrino Monte-Carlo transport.

@@ -1363,15 +1363,71 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
         ENT_ACKNOWLEDGE(ent_physics_pdf);
 
         /* Check the inputs. */
-        *value = 0.;
-        const struct lha_pdf * const pdf = physics->pdf;
-        if ((x > 1.) || (x <= 0.) || (Q2 < 0.) || (abs(parton) > pdf->nf))
+        if ((x > 1.) || (x <= 0.) || (Q2 < 0.))
                 ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
 
         /* Compute the PDF and return. */
+        const struct lha_pdf * const pdf = physics->pdf;
         float xfx[LHAPDF_NF_MAX];
         lha_pdf_compute(pdf, x, Q2, xfx);
-        *value = xfx[pdf->nf + parton] / x;
+
+        const int nf = (ENT_N_PARTONS - 1) / 2;
+        if ((parton >= -nf) && (parton <= nf)) {
+                /* Return only the requested PDF */
+                if (abs(parton) <= pdf->nf) {
+                        *value = xfx[pdf->nf + parton] / x;
+                } else {
+                        *value = 0.;
+                }
+        } else if (parton == ENT_N_PARTONS) {
+                /* Return all PDFs */
+                int i;
+                for (i = 0; i < ENT_N_PARTONS; i++) {
+                        const int ii = pdf->nf + i - nf;
+                        value[i] = ((ii >= 0) && (ii < 2 * pdf->nf + 1)) ?
+                            xfx[ii] : 0.;
+                }
+        } else {
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
+
+        return ENT_RETURN_SUCCESS;
+}
+
+/* API interface to DIS SFs. */
+enum ent_return ent_physics_dsf(struct ent_physics * physics,
+    enum ent_pid projectile, enum ent_pid target, enum ent_process process,
+    double x, double Q2, double * F2, double * F3, double * FL)
+{
+        ENT_ACKNOWLEDGE(ent_physics_dsf);
+
+        /* Check the inputs. */
+        if ((x > 1.) || (x <= 0.) || (Q2 < 0.))
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+
+        double Z;
+        if (target == ENT_PID_PROTON) {
+                Z = 1.;
+        } else if (target == ENT_PID_NEUTRON) {
+                Z = 0.;
+        } else {
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
+
+        const int aid = abs(projectile);
+        if ((aid != 12) && (aid != 14) && (aid != 16)) {
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
+
+        /* Compute the SFs and return. */
+        const double A = 1.;
+        double sf[3];
+        dis_compute_sf(physics, projectile, Z, A, process, x, Q2, sf);
+
+        if (F2 != NULL) *F2 = sf[0] + sf[1];
+        if (F3 != NULL) *F3 = (sf[0] - sf[1]) / x;
+        if (FL != NULL) *FL = sf[2] + sf[2];
+
         return ENT_RETURN_SUCCESS;
 }
 
