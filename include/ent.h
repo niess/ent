@@ -325,20 +325,24 @@ struct ent_state {
 /**
  * Create a new Physics environment.
  *
- * @param physics    A handle for the Physics environment.
- * @param pdf        The PDF file(s) to create the set from.
- * @param cs         A cross-section file, for DIS processes, or `NULL`.
+ * @param physics     A handle for the Physics environment.
+ * @param pdf_or_sf   The PDFs or SFs for DIS.
+ * @param cs          A cross-section file, for DIS processes, or `NULL`.
  * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
  * code is returned as detailed below.
  *
- * Create a new Physics environment conforming to the Standard Model of
- * Particle Physics and according to the given tabulations of Parton
- * Distribution Functions (PDF).
+ * Create a new Physics environment conforming to the Standard Model of Particle
+ * Physics and according to the given tabulations of Parton Distribution
+ * Functions (PDFs), or directly from DIS Structure Functions (SFs). If PDFs are
+ * provided, then DIS SFs are computed by ENT using LO expressions.
+ *
+ * __Note__: PDFs files must be in Les Houches Accord (LHA) format. Structure
+ * functions are provided using an ENT specific binary format (.esf).
  *
  * If *cs* is not `NULL`, then it must point to file containing cross-section
  * values for DIS processes. ENT's cross-sections are re-scaled accordingly.
  * Otherwise, ENT's cross-sections for DIS processes are computed from the
- * provided PDF using LO expressions.
+ * SFs.
  *
  * __Error codes__
  *
@@ -349,7 +353,7 @@ struct ent_state {
  *     ENT_RETURN_PATH_ERROR      An input file could not be found/opened.
  */
 enum ent_return ent_physics_create(
-    struct ent_physics ** physics, const char * pdf, const char * cs);
+    struct ent_physics ** physics, const char * pdf_or_sf, const char * cs);
 
 /**
  * Destroy a Physics environment.

@@ -73,6 +73,9 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* DIS SFs file tag */
+#define ENT_SF_TAG "/ent/sf/"
+
 /* Indices for Physics processes with a specific projectile and target. */
 enum proget_index {
         /* Backward decay from a tau. */
@@ -125,6 +128,8 @@ enum proget_index {
 struct ent_physics {
         /* Index to the PDF data. */
         struct lha_pdf * pdf;
+        /* Index to the SFs data. */
+        struct dis_sf * sf[8];
         /* Entry point for the total cross-sections. */
         double * cs;
         /* Entry point for the probability density function for DIS. */
@@ -161,6 +166,8 @@ static void * physics_create(void)
                 sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
+        p->pdf = NULL;
+        memset(p->sf, 0x0, sizeof(p->sf));
         p->cs = (double *)(p->data);
         p->dis_pdf = p->cs + (PROGET_N - 1) * ENERGY_N;
         p->dis_cdf = p->dis_pdf + 8 * DIS_Q2_N * DIS_X_N;
@@ -647,64 +654,315 @@ static void lha_pdf_compute(
         }
 }
 
+/* Containers for DIS SF data. */
+struct dis_sf {
+        /* The table size. */
+        int nx, nQ2;
+        /* Links to the data tables. */
+        float *x, *Q2, *lambda, *sf;
+        /* Placeholder for variable size data. */
+        float data[];
+};
+
+/* Load a single SF table in ENT format. */
+static enum ent_return esf_load_table(
+    FILE * stream, int sf_index, struct ent_physics * physics)
+{
+#define N_SF 3
+
+        struct dis_sf * sf = NULL;
+        enum ent_return rc;
+
+        /* Read binary header */
+        int version, nx, nQ2;
+        double xmin, xmax, Q2min, Q2max;
+        if ((fread(&version, sizeof(version), 1, stream) != 1) ||
+            (fread(&nx, sizeof(nx), 1, stream) != 1) ||
+            (fread(&nQ2, sizeof(nQ2), 1, stream) != 1) ||
+            (fread(&xmin, sizeof(xmin), 1, stream) != 1) ||
+            (fread(&xmax, sizeof(xmax), 1, stream) != 1) ||
+            (fread(&Q2min, sizeof(Q2min), 1, stream) != 1) ||
+            (fread(&Q2max, sizeof(Q2max), 1, stream) != 1))
+        {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+
+        /* Allocate memory for tables and map it. */
+        const unsigned int size_x =
+            memory_padded_size(nx * sizeof(float), sizeof(double));
+        const unsigned int size_Q2 =
+            memory_padded_size(nQ2 * sizeof(float), sizeof(double));
+        const unsigned int size_lambda =
+            memory_padded_size(N_SF * nQ2 * sizeof(float), sizeof(double));
+        const unsigned int size_sf =
+            memory_padded_size(N_SF * nx * nQ2 * sizeof(float), sizeof(double));
+        unsigned int size =
+            sizeof(struct dis_sf) + size_x + size_Q2 + size_lambda + size_sf;
+        if ((sf = malloc(size)) == NULL) {
+                rc = ENT_RETURN_MEMORY_ERROR;
+                goto error;
+        }
+
+        sf->nx = nx;
+        sf->nQ2 = nQ2;
+        sf->x = sf->data;
+        sf->Q2 = (float *)((char *)sf->data + size_x);
+        sf->lambda = (float *)((char *)sf->Q2 + size_Q2);
+        sf->sf = (float *)((char *)sf->lambda + size_lambda);
+
+        /* Load the SFs data. */
+        const int nr = N_SF * nx * nQ2;
+        if (fread(sf->sf, sizeof(*sf->sf), nr, stream) != nr) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+
+        /* Fill x and Q2 tables. */
+        int i;
+
+        const double rx = log(xmax / xmin) / (nx - 1);
+        for (i = 0; i < nx; i++) {
+                sf->x[i] = xmin * exp(i * rx);
+        }
+
+        const double rQ2 = log(Q2max / Q2min) / (nQ2 - 1);
+        for (i = 0; i < nQ2; i++) {
+                sf->Q2[i] = Q2min * exp(i * rQ2);
+        }
+
+        /* Compute lambda exponents. */
+        memset(sf->lambda, 0x0, size_lambda);
+        if (sf->x[0] <= 0.) {
+                return ENT_RETURN_SUCCESS;
+        }
+
+        float lxi = log(sf->x[1] / sf->x[0]);
+        if (lxi <= 0.) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+        lxi = 1. / lxi;
+
+        float * table;
+        for (i = 0, table = sf->lambda; i < nQ2; i++, table += N_SF) {
+                const float * const sf0 = sf->sf + i * N_SF;
+                const float * const sf1 = sf->sf + (nQ2 + i) * N_SF;
+                int j;
+                for (j = 0; j < N_SF; j++) {
+                        const float f0 = sf0[j];
+                        const float f1 = sf1[j];
+                        if (f0 * f1 > 0.)
+                                table[j] = log(f0 / f1) * lxi;
+                }
+        }
+
+        /* Register the table */
+        physics->sf[sf_index] = sf;
+
+        return ENT_RETURN_SUCCESS;
+error:
+        free(sf);
+        return rc;
+}
+
+/* Load SFs from a .esf file, i.e. in ENT format. */
+static enum ent_return esf_load(FILE * stream, struct ent_physics ** physics)
+{
+        *physics = NULL;
+        enum ent_return rc;
+
+        /* Skip metadata. */
+        while (fgetc(stream) != 0x0) {
+                if (feof(stream)) {
+                        rc = ENT_RETURN_FORMAT_ERROR;
+                        goto error;
+                }
+        }
+
+        /* Create the physics wrapper. */
+        *physics = physics_create();
+        if (*physics == NULL) {
+                rc = ENT_RETURN_MEMORY_ERROR;
+                goto error;
+        }
+
+        /* Load tables */
+        int i;
+        for (i = 0; i < 8; i++) {
+                if ((rc = esf_load_table(stream, i, *physics)) !=
+                    ENT_RETURN_SUCCESS) {
+                        goto error;
+                }
+        }
+
+        return ENT_RETURN_SUCCESS;
+error:
+        free(*physics);
+        *physics = NULL;
+        return rc;
+}
+
+static void dis_sf_compute(
+    const struct dis_sf * sf, float x, float Q2, float * values)
+{
+        memset(values, 0x0, N_SF * sizeof(*values));
+
+        /* Check the bounds. */
+        while ((Q2 < sf->Q2[0]) || (Q2 >= sf->Q2[sf->nQ2 - 1]) ||
+            (x >= sf->x[sf->nx - 1])) {
+                return;
+        }
+
+        if (x < sf->x[0]) {
+                /* Extrapolate with a power law for small x values, i.e.
+                 * F ~ 1 / x**lambda(Q2).
+                 */
+                int iQ0, iQ1;
+                float hQ;
+                if (Q2 >= sf->Q2[sf->nQ2 - 1]) {
+                        iQ0 = iQ1 = sf->nQ2 - 1;
+                        hQ = 1.;
+                } else {
+                        iQ0 = 0;
+                        iQ1 = sf->nQ2 - 1;
+                        table_bracket(sf->Q2, Q2, &iQ0, &iQ1);
+                        hQ =
+                            (Q2 - sf->Q2[iQ0]) / (sf->Q2[iQ1] - sf->Q2[iQ0]);
+                }
+
+                int i;
+                const float * const lambda0 = sf->lambda + iQ0 * N_SF;
+                const float * const lambda1 = sf->lambda + iQ1 * N_SF;
+                const float * const sf0 = sf->sf + iQ0 * N_SF;
+                const float * const sf1 = sf->sf + iQ1 * N_SF;
+                for (i = 0; i < N_SF; i++) {
+                        const float y0 = lambda0[i];
+                        const float y1 = lambda1[i];
+                        if ((y0 <= 0.) || (y1 <= 0.))
+                                values[i] = 0.;
+                        else {
+                                const float lambda = y0 * (1. - hQ) + y1 * hQ;
+                                values[i] = (sf0[i] * (1. - hQ) + sf1[i] * hQ) *
+                                    pow(x / sf->x[0], -lambda);
+                        }
+                }
+        } else {
+                /* We are within the table bounds. Let's locate the bracketing
+                 * table rows.
+                 */
+                int ix0 = 0, ix1 = sf->nx - 1, iQ0 = 0, iQ1 = sf->nQ2 - 1;
+                table_bracket(sf->x, x, &ix0, &ix1);
+                table_bracket(sf->Q2, Q2, &iQ0, &iQ1);
+                const float hx =
+                    (x - sf->x[ix0]) / (sf->x[ix1] - sf->x[ix0]);
+                const float hQ =
+                    (Q2 - sf->Q2[iQ0]) / (sf->Q2[iQ1] - sf->Q2[iQ0]);
+
+                /* Interpolate the PDFs. */
+                int i;
+                const float * const sf00 =
+                    sf->sf + (ix0 * sf->nQ2 + iQ0) * N_SF;
+                const float * const sf01 =
+                    sf->sf + (ix0 * sf->nQ2 + iQ1) * N_SF;
+                const float * const sf10 =
+                    sf->sf + (ix1 * sf->nQ2 + iQ0) * N_SF;
+                const float * const sf11 =
+                    sf->sf + (ix1 * sf->nQ2 + iQ1) * N_SF;
+                const float r00 = (1. - hx) * (1. - hQ);
+                const float r01 = (1. - hx) * hQ;
+                const float r10 = hx * (1. - hQ);
+                const float r11 = hx * hQ;
+
+                for (i = 0; i < N_SF; i++) {
+                        values[i] = r00 * sf00[i] + r01 * sf01[i] +
+                            r10 * sf10[i] + r11 * sf11[i];
+                }
+        }
+}
+
 /* Compute SFs for DIS. */
 static void dis_compute_sf(struct ent_physics * physics,
     enum ent_pid projectile, double Z, double A, enum ent_process process,
     float x, float Q2, double * sf)
 {
-        /* Get the PDFs. */
-        const struct lha_pdf * const pdf = physics->pdf;
-        float xfx[LHAPDF_NF_MAX];
-        lha_pdf_compute(pdf, x, Q2, xfx);
+        if (physics->pdf != NULL) {
+                /* Get the PDFs. */
+                const struct lha_pdf * const pdf = physics->pdf;
+                float xfx[LHAPDF_NF_MAX];
+                lha_pdf_compute(pdf, x, Q2, xfx);
 
-        /* Compute the relevant structure functions. */
-        const int eps = (projectile > 0) ? 1 : -1;
-        const int nf = pdf->nf;
-        const double N = A - Z; /* Number of neutrons. */
-        if (process == ENT_PROCESS_DIS_CC) {
-                /* Charged current DIS process. */
-                const double d = (Z <= 0.) ? 0. : xfx[1 * eps + nf];
-                const double u = (N <= 0.) ? 0. : xfx[2 * eps + nf];
-                const double s = xfx[3 * eps + nf];
-                const double b = xfx[5 * eps + nf];
-                const double F1 = Z * d + N * u + A * (s + b);
+                /* Compute the relevant structure functions. */
+                const int eps = (projectile > 0) ? 1 : -1;
+                const int nf = pdf->nf;
+                const double N = A - Z; /* Number of neutrons. */
+                if (process == ENT_PROCESS_DIS_CC) {
+                        /* Charged current DIS process. */
+                        const double d = (Z <= 0.) ? 0. : xfx[1 * eps + nf];
+                        const double u = (N <= 0.) ? 0. : xfx[2 * eps + nf];
+                        const double s = xfx[3 * eps + nf];
+                        const double b = xfx[5 * eps + nf];
+                        const double F1 = Z * d + N * u + A * (s + b);
 
-                const double dbar = (N <= 0.) ? 0. : xfx[-1 * eps + nf];
-                const double ubar = (Z <= 0.) ? 0. : xfx[-2 * eps + nf];
-                const double cbar = xfx[-4 * eps + nf];
-                const double F2 = N * dbar + Z * ubar + A * cbar;
+                        const double dbar = (N <= 0.) ? 0. : xfx[-1 * eps + nf];
+                        const double ubar = (Z <= 0.) ? 0. : xfx[-2 * eps + nf];
+                        const double cbar = xfx[-4 * eps + nf];
+                        const double F2 = N * dbar + Z * ubar + A * cbar;
 
-                sf[0] = 2 * F1;
-                sf[1] = 2 * F2;
-                sf[2] = 0.;
+                        sf[0] = 2 * F1;
+                        sf[1] = 2 * F2;
+                        sf[2] = 0.;
+                } else {
+                        /* Neutral current DIS process. */
+                        const double d = xfx[1 * eps + nf];
+                        const double u = xfx[2 * eps + nf];
+                        const double s = xfx[3 * eps + nf];
+                        const double c = xfx[4 * eps + nf];
+                        const double b = xfx[5 * eps + nf];
+
+                        const double s23 = 2. * ENT_PHYS_SIN_THETA_W_2 / 3.;
+                        const double gp2 = 1. + 4. * s23 * (s23 - 1.);
+                        const double gm2 = 4. * s23 * s23;
+                        const double gpp2 = 1. + s23 * (s23 - 2.);
+                        const double gpm2 = s23 * s23;
+                        const double F1 = Z * u + N * d + A * c;
+                        const double F2 = Z * d + N * u + A * (s + b);
+
+                        const double dbar = xfx[-1 * eps + nf];
+                        const double ubar = xfx[-2 * eps + nf];
+                        const double sbar = xfx[-3 * eps + nf];
+                        const double cbar = xfx[-4 * eps + nf];
+                        const double bbar = xfx[-5 * eps + nf];
+                        const double F3 = Z * ubar + N * dbar + A * cbar;
+                        const double F4 = Z * dbar + N * ubar +
+                                          A * (sbar + bbar);
+
+                        sf[0] = 0.5 * (gp2 * F1 + gpp2 * F2 + gm2 * F3 +
+                                       gpm2 * F4);
+                        sf[1] = 0.5 * (gm2 * F1 + gpm2 * F2 + gp2 * F3 +
+                                       gpp2 * F4);
+                        sf[2] = 0.;
+                }
         } else {
-                /* Neutral current DIS process. */
-                const double d = xfx[1 * eps + nf];
-                const double u = xfx[2 * eps + nf];
-                const double s = xfx[3 * eps + nf];
-                const double c = xfx[4 * eps + nf];
-                const double b = xfx[5 * eps + nf];
+                /* Combine the tabulated SFs */
+                const int itab =
+                    (process == ENT_PROCESS_DIS_NC) + 2 * (projectile < 0);
+                const double N = A - Z; /* Number of neutrons. */
+                float tmp[N_SF];
 
-                const double s23 = 2. * ENT_PHYS_SIN_THETA_W_2 / 3.;
-                const double gp2 = 1. + 4. * s23 * (s23 - 1.);
-                const double gm2 = 4. * s23 * s23;
-                const double gpp2 = 1. + s23 * (s23 - 2.);
-                const double gpm2 = s23 * s23;
-                const double F1 = Z * u + N * d + A * c;
-                const double F2 = Z * d + N * u + A * (s + b);
-
-                const double dbar = xfx[-1 * eps + nf];
-                const double ubar = xfx[-2 * eps + nf];
-                const double sbar = xfx[-3 * eps + nf];
-                const double cbar = xfx[-4 * eps + nf];
-                const double bbar = xfx[-5 * eps + nf];
-                const double F3 = Z * ubar + N * dbar + A * cbar;
-                const double F4 = Z * dbar + N * ubar + A * (sbar + bbar);
-
-                sf[0] = 0.5 * (gp2 * F1 + gpp2 * F2 + gm2 * F3 + gpm2 * F4);
-                sf[1] = 0.5 * (gm2 * F1 + gpm2 * F2 + gp2 * F3 + gpp2 * F4);
-                sf[2] = 0.;
+                memset(sf, 0x0, N_SF * sizeof(*sf));
+                if (N > 0.) {
+                        dis_sf_compute(physics->sf[itab], x, Q2, tmp);
+                        int i;
+                        for (i = 0; i < N_SF; i++) sf[i] += N * tmp[i];
+                }
+                if (Z > 0.) {
+                        dis_sf_compute(physics->sf[itab + 4], x, Q2, tmp);
+                        int i;
+                        for (i = 0; i < N_SF; i++) sf[i] += Z * tmp[i];
+                }
         }
+#undef N_SF
 }
 
 /* DCS for Deep Inelastic Scattering (DIS) on nucleons. */
@@ -723,6 +981,7 @@ static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
         const double r = MX2 / (MX2 + Q2);
         const double y1 = 1. - y;
         const double factor = r * r * (sf[0] + y1 * y1 * sf[1] - y * y * sf[2]);
+        if (factor <= 0.) return 0.;
 
         /* Return the DCS. */
         return energy * factor * (ENT_PHYS_GF * ENT_PHYS_HBC) *
@@ -960,7 +1219,7 @@ static void physics_tabulate_dis(struct ent_physics * physics)
         /* Compute the table(s) bounds. */
         double xmin = DBL_MAX, xmax = -DBL_MAX;
         double Q2min = DBL_MAX, Q2max = -DBL_MAX;
-        {
+        if (physics->pdf != NULL) {
                 struct lha_pdf * p;
                 for (p = physics->pdf; p != NULL; p = p->next) {
                         if (p->x[0] < xmin) xmin = p->x[0];
@@ -969,6 +1228,21 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                         if (tmp0 > xmax) xmax = tmp0;
                         const double tmp1 = p->Q2[p->nQ2 - 1];
                         if (tmp1 > Q2max) Q2max = tmp1;
+                }
+        } else {
+                int i;
+                for (i = 0; i < 8; i++) {
+                        const int ix = physics->sf[i]->nx - 1;
+                        if (physics->sf[i]->x[0] < xmin)
+                                xmin = physics->sf[i]->x[0];
+                        if (physics->sf[i]->x[ix] > xmax)
+                                xmax = physics->sf[i]->x[ix];
+
+                        const int iq = physics->sf[i]->nQ2 - 1;
+                        if (physics->sf[i]->Q2[0] < Q2min)
+                                Q2min = physics->sf[i]->Q2[0];
+                        if (physics->sf[i]->Q2[iq] > Q2max)
+                                Q2max = physics->sf[i]->Q2[iq];
                 }
         }
 
@@ -1018,7 +1292,8 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                                     (process == ENT_PROCESS_DIS_CC) ? rW : rZ;
                                 const double factor = r * (sf[0] + sf[1]);
 
-                                pdf[k * DIS_X_N * DIS_Q2_N] = c * factor * Q2;
+                                pdf[k * DIS_X_N * DIS_Q2_N] = (factor > 0.) ?
+                                    c * factor * Q2 : 0.;
                         }
                 }
         }
@@ -1095,20 +1370,31 @@ static enum ent_return cs_load(FILE * stream, struct ent_physics * physics)
 }
 
 /* API constructor for a Physics object. */
-enum ent_return ent_physics_create(
-    struct ent_physics ** physics, const char * pdf_file, const char * cs_file)
+enum ent_return ent_physics_create(struct ent_physics ** physics,
+    const char * pdf_or_sf_file, const char * cs_file)
 {
         ENT_ACKNOWLEDGE(ent_physics_create);
 
         enum ent_return rc;
         *physics = NULL;
 
-        /* Load the PDFs. */
+        /* Load the SFs or PDFs. */
         FILE * stream;
         rc = ENT_RETURN_PATH_ERROR;
-        if ((stream = fopen(pdf_file, "r")) == NULL) goto exit;
+        if ((stream = fopen(pdf_or_sf_file, "rb")) == NULL) goto exit;
 
-        if ((rc = lha_load(stream, physics)) != ENT_RETURN_SUCCESS) goto exit;
+        char tag[sizeof(ENT_SF_TAG)] = {0x0};
+        fread(tag, sizeof(tag) - 1, 1, stream);
+        if (strcmp(tag, ENT_SF_TAG) == 0) {
+                /* This is SF file. */
+                if ((rc = esf_load(stream, physics)) != ENT_RETURN_SUCCESS)
+                        goto exit;
+        } else {
+                /* This must be a PDF file in LHA format. */
+                fseek(stream, 0, SEEK_SET);
+                if ((rc = lha_load(stream, physics)) != ENT_RETURN_SUCCESS)
+                        goto exit;
+        }
         fclose(stream);
         stream = NULL;
 
@@ -1142,6 +1428,11 @@ void ent_physics_destroy(struct ent_physics ** physics)
                 struct lha_pdf * next = p->next;
                 free(p);
                 p = next;
+        }
+
+        int i;
+        for (i = 0; i < sizeof((*physics)->sf) / sizeof(*(*physics)->sf); i++) {
+                free((*physics)->sf[i]);
         }
 
         free(*physics);
@@ -1366,29 +1657,45 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
         if ((x > 1.) || (x <= 0.) || (Q2 < 0.))
                 ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
 
-        /* Compute the PDF and return. */
-        const struct lha_pdf * const pdf = physics->pdf;
-        float xfx[LHAPDF_NF_MAX];
-        lha_pdf_compute(pdf, x, Q2, xfx);
-
-        const int nf = (ENT_N_PARTONS - 1) / 2;
-        if ((parton >= -nf) && (parton <= nf)) {
-                /* Return only the requested PDF */
-                if (abs(parton) <= pdf->nf) {
-                        *value = xfx[pdf->nf + parton] / x;
-                } else {
+        if (physics->pdf == NULL) {
+                /* No PDF data. Return 0. */
+                const int nf = (ENT_N_PARTONS - 1) / 2;
+                if ((parton >= -nf) && (parton <= nf)) {
                         *value = 0.;
-                }
-        } else if (parton == ENT_N_PARTONS) {
-                /* Return all PDFs */
-                int i;
-                for (i = 0; i < ENT_N_PARTONS; i++) {
-                        const int ii = pdf->nf + i - nf;
-                        value[i] = ((ii >= 0) && (ii < 2 * pdf->nf + 1)) ?
-                            xfx[ii] : 0.;
+                } else if (parton == ENT_N_PARTONS) {
+                        int i;
+                        for (i = 0; i < ENT_N_PARTONS; i++) {
+                                value[i] = 0.;
+                        }
+                } else {
+                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
                 }
         } else {
-                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+                /* Compute the PDF and return. */
+                const struct lha_pdf * const pdf = physics->pdf;
+                float xfx[LHAPDF_NF_MAX];
+                lha_pdf_compute(pdf, x, Q2, xfx);
+
+                const int nf = (ENT_N_PARTONS - 1) / 2;
+                if ((parton >= -nf) && (parton <= nf)) {
+                        /* Return only the requested PDF */
+                        if (abs(parton) <= pdf->nf) {
+                                *value = xfx[pdf->nf + parton] / x;
+                        } else {
+                                *value = 0.;
+                        }
+                } else if (parton == ENT_N_PARTONS) {
+                        /* Return all PDFs */
+                        int i;
+                        for (i = 0; i < ENT_N_PARTONS; i++) {
+                                const int ii = pdf->nf + i - nf;
+                                value[i] =
+                                    ((ii >= 0) && (ii < 2 * pdf->nf + 1)) ?
+                                    xfx[ii] : 0.;
+                        }
+                } else {
+                        ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+                }
         }
 
         return ENT_RETURN_SUCCESS;
@@ -1802,7 +2109,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                 const double y1 = 1. - y;
                 const double factor1 = sf[0] + y1 * y1 * sf[1] - y * y * sf[2];
 
-                if (context->random(context) * factor0 <= factor1) break;
+                if (context->random(context) * factor0 < factor1) break;
         }
 
         *y_ = y;
