@@ -1525,7 +1525,7 @@ static int cross_section_prepare(struct ent_physics * physics, double energy,
                 *cs0 = physics->cs + (ENERGY_N - 2) * (PROGET_N - 1);
                 *cs1 = physics->cs + (ENERGY_N - 1) * (PROGET_N - 1);
                 *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
-                *p2 = energy / ENERGY_MIN;
+                *p2 = energy / ENERGY_MAX;
         } else {
                 /* Interpolation model. */
                 mode = 0;
