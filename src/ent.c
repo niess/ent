@@ -139,7 +139,7 @@ struct ent_physics {
         /* Sampling factors for x, in DIS. */
         double dis_xmin, dis_dlx, dis_rx;
         /* Sampling factors for Q2, in DIS. */
-        double dis_Q2min, dis_dlQ2, dis_rQ2;
+        double dis_Q2min, dis_Q2max, dis_dlQ2, dis_rQ2;
         /* Placeholder for dynamic data. */
         char data[];
 };
@@ -809,7 +809,7 @@ static void dis_sf_compute(
         memset(values, 0x0, N_SF * sizeof(*values));
 
         /* Check the bounds. */
-        while ((Q2 < sf->Q2[0]) || (Q2 >= sf->Q2[sf->nQ2 - 1]) ||
+        if ((Q2 < sf->Q2[0]) || (Q2 >= sf->Q2[sf->nQ2 - 1]) ||
             (x >= sf->x[sf->nx - 1])) {
                 return;
         }
@@ -1111,37 +1111,40 @@ static double dcs_integrate(struct ent_physics * physics,
         if ((process == ENT_PROCESS_DIS_CC) ||
             (process == ENT_PROCESS_DIS_NC)) {
                 /* Deep Inelastic Scattering requires a double integral. */
-                double xmin, ymin;
-                int nx, ny;
-                if (energy >= 1E+04) {
-                        nx = ny = 3;
-                        xmin = ymin = 1E-12;
-                } else {
-                        nx = ny = 6;
-                        xmin = 1. / energy;
-                        if (xmin > 1E-02) xmin = 1E-02;
-                        ymin = 1. / energy;
-                        if (ymin > 1E-04) ymin = 1E-04;
-                }
-                const double dlx = -log(xmin) / nx;
-                const double dly = -log(ymin) / ny;
+                const double Q2max = 2 * ENT_MASS_NUCLEON * energy;
+                const double Q2h = (Q2max > physics->dis_Q2max) ?
+                    physics->dis_Q2max : Q2max;
+                const double ln10i = 0.4343; /*1 / ln(10) */
+                double dlQ2 = log(Q2h / physics->dis_Q2min);
+                const int nQ2 = (int)(dlQ2 * 10 * ln10i / N_GQ) + 1;
+                dlQ2 /= nQ2;
+
                 double I = 0.;
-                int i, j;
-                for (i = 0; i < ny * N_GQ; i++) {
-                        const double y = ymin *
-                            exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dly);
+                int i;
+                for (i = 0; i < nQ2 * N_GQ; i++) {
+                        const double Q2 = physics->dis_Q2min *
+                            exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dlQ2);
+
+                        const double xmin = Q2 / Q2max;
+                        double dlx = log(1. / xmin);
+                        const int nx = (int)(dlx * 10 * ln10i / N_GQ) + 1;
+                        dlx /= nx;
+
                         double J = 0.;
+                        int j;
                         for (j = 0; j < nx * N_GQ; j++) {
                                 const double x = xmin *
                                     exp((0.5 + 0.5 * xGQ[j % N_GQ] + j / N_GQ) *
                                         dlx);
-                                J += wGQ[j % N_GQ] * x *
+
+                                const double y = Q2 / (Q2max * x);
+                                J += wGQ[j % N_GQ] *
                                     dcs_compute(physics, projectile, energy, Z,
                                         A, process, x, y);
                         }
-                        I += wGQ[i % N_GQ] * y * J;
+                        I += wGQ[i % N_GQ] * Q2 / Q2max * J * dlx;
                 }
-                return 0.25 * I * dlx * dly;
+                return 0.25 * I * dlQ2;
         } else {
                 /* Scattering on an atomic electron. */
                 double mu = ENT_MASS_ELECTRON;
@@ -1180,7 +1183,7 @@ static double dcs_integrate(struct ent_physics * physics,
 }
 
 /* Tabulate the interactions lengths and processes weights. */
-static void physics_tabulate_cs(struct ent_physics * physics)
+static void physics_tabulate_cs(struct ent_physics * physics, int compute_dis)
 {
         const enum ent_process process[PROGET_N - 1] = { ENT_PROCESS_DIS_CC,
                 ENT_PROCESS_DIS_NC, ENT_PROCESS_DIS_CC, ENT_PROCESS_DIS_NC,
@@ -1200,11 +1203,12 @@ static void physics_tabulate_cs(struct ent_physics * physics)
         const double dlE = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
         double * table;
         int i;
+        const int j0 = compute_dis ? 0 : 8;
         for (i = 0, table = physics->cs; i < ENERGY_N;
              i++, table += PROGET_N - 1) {
                 const double energy = ENERGY_MIN * exp(i * dlE);
                 int j;
-                for (j = 0; j < PROGET_N - 1; j++) {
+                for (j = j0; j < PROGET_N - 1; j++) {
                         const double Z =
                             (j <= PROGET_NC_NU_BAR_NEUTRON) ? 0. : 1.;
                         table[j] = dcs_integrate(
@@ -1252,6 +1256,7 @@ static void physics_tabulate_dis(struct ent_physics * physics)
         physics->dis_dlx = log(xmax / physics->dis_xmin) / (DIS_X_N - 1);
         physics->dis_rx = exp(physics->dis_dlx);
         physics->dis_Q2min = Q2min;
+        physics->dis_Q2max = Q2max;
         physics->dis_dlQ2 = log(Q2max / physics->dis_Q2min) / (DIS_Q2_N - 1);
         physics->dis_rQ2 = exp(physics->dis_dlQ2);
 
@@ -1400,8 +1405,8 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
 
         /* Build the tabulations. */
         rc = ENT_RETURN_SUCCESS;
-        physics_tabulate_cs(*physics);
         physics_tabulate_dis(*physics);
+        physics_tabulate_cs(*physics, cs_file == NULL);
 
         if (cs_file != NULL) {
                 /* Load any cross-section table. */
@@ -1521,7 +1526,7 @@ static int cross_section_prepare(struct ent_physics * physics, double energy,
                 *p2 = energy / ENERGY_MIN;
         } else if (energy >= ENERGY_MAX) {
                 /* Log extrapolation model above Emax. */
-                mode = 1;
+                mode = 2;
                 *cs0 = physics->cs + (ENERGY_N - 2) * (PROGET_N - 1);
                 *cs1 = physics->cs + (ENERGY_N - 1) * (PROGET_N - 1);
                 *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
@@ -1550,10 +1555,14 @@ static double cross_section_compute(
         if (mode == 0) {
                 /* interpolation case. */
                 return cs0[proget] * (1. - p1) + cs1[proget] * p1;
-        } else {
-                /* Extrapolation case. */
+        } else if (mode == 1) {
+                /* Extrapolation case (below). */
                 const double a = log(cs1[proget] / cs0[proget]) * p1;
                 return cs0[proget] * pow(p2, a);
+        } else {
+                /* Extrapolation case (above). */
+                const double a = log(cs1[proget] / cs0[proget]) * p1;
+                return cs1[proget] * pow(p2, a);
         }
 }
 
