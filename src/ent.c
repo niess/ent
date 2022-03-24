@@ -73,8 +73,11 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-/* DIS SFs file tag */
-#define ENT_SF_TAG "/ent/sf/"
+/* ENT data format tag. */
+#define ENT_FORMAT_TAG "/ent/"
+
+/* ENT data format version. */
+#define ENT_FORMAT_VERSION 0
 
 /* Indices for Physics processes with a specific projectile and target. */
 enum proget_index {
@@ -664,31 +667,10 @@ struct dis_sf {
         float data[];
 };
 
-/* Load a single SF table in ENT format. */
-static enum ent_return esf_load_table(
-    FILE * stream, int sf_index, struct ent_physics * physics)
+/* Create a new table instance. */
+static struct dis_sf * dis_sf_create(int nx, int nQ2)
 {
 #define N_SF 3
-
-        struct dis_sf * sf = NULL;
-        enum ent_return rc;
-
-        /* Read binary header */
-        int version, nx, nQ2;
-        double xmin, xmax, Q2min, Q2max;
-        if ((fread(&version, sizeof(version), 1, stream) != 1) ||
-            (fread(&nx, sizeof(nx), 1, stream) != 1) ||
-            (fread(&nQ2, sizeof(nQ2), 1, stream) != 1) ||
-            (fread(&xmin, sizeof(xmin), 1, stream) != 1) ||
-            (fread(&xmax, sizeof(xmax), 1, stream) != 1) ||
-            (fread(&Q2min, sizeof(Q2min), 1, stream) != 1) ||
-            (fread(&Q2max, sizeof(Q2max), 1, stream) != 1))
-        {
-                rc = ENT_RETURN_FORMAT_ERROR;
-                goto error;
-        }
-
-        /* Allocate memory for tables and map it. */
         const unsigned int size_x =
             memory_padded_size(nx * sizeof(float), sizeof(double));
         const unsigned int size_Q2 =
@@ -699,9 +681,10 @@ static enum ent_return esf_load_table(
             memory_padded_size(N_SF * nx * nQ2 * sizeof(float), sizeof(double));
         unsigned int size =
             sizeof(struct dis_sf) + size_x + size_Q2 + size_lambda + size_sf;
+
+        struct dis_sf * sf;
         if ((sf = malloc(size)) == NULL) {
-                rc = ENT_RETURN_MEMORY_ERROR;
-                goto error;
+                return NULL;
         }
 
         sf->nx = nx;
@@ -711,43 +694,31 @@ static enum ent_return esf_load_table(
         sf->lambda = (float *)((char *)sf->Q2 + size_Q2);
         sf->sf = (float *)((char *)sf->lambda + size_lambda);
 
-        /* Load the SFs data. */
-        const int nr = N_SF * nx * nQ2;
-        if (fread(sf->sf, sizeof(*sf->sf), nr, stream) != nr) {
-                rc = ENT_RETURN_FORMAT_ERROR;
-                goto error;
-        }
+        return sf;
+}
 
-        /* Fill x and Q2 tables. */
-        int i;
-
-        const double rx = log(xmax / xmin) / (nx - 1);
-        for (i = 0; i < nx; i++) {
-                sf->x[i] = xmin * exp(i * rx);
-        }
-
-        const double rQ2 = log(Q2max / Q2min) / (nQ2 - 1);
-        for (i = 0; i < nQ2; i++) {
-                sf->Q2[i] = Q2min * exp(i * rQ2);
-        }
-
-        /* Compute lambda exponents. */
+/* Compute small x extrapolation. */
+static enum ent_return dis_sf_compute_lambda(struct dis_sf * sf)
+{
+        const unsigned int size_lambda =
+            memory_padded_size(N_SF * sf->nQ2 * sizeof(float), sizeof(double));
         memset(sf->lambda, 0x0, size_lambda);
+
         if (sf->x[0] <= 0.) {
                 return ENT_RETURN_SUCCESS;
         }
 
         float lxi = log(sf->x[1] / sf->x[0]);
         if (lxi <= 0.) {
-                rc = ENT_RETURN_FORMAT_ERROR;
-                goto error;
+                return ENT_RETURN_FORMAT_ERROR;
         }
         lxi = 1. / lxi;
 
+        int i;
         float * table;
-        for (i = 0, table = sf->lambda; i < nQ2; i++, table += N_SF) {
+        for (i = 0, table = sf->lambda; i < sf->nQ2; i++, table += N_SF) {
                 const float * const sf0 = sf->sf + i * N_SF;
-                const float * const sf1 = sf->sf + (nQ2 + i) * N_SF;
+                const float * const sf1 = sf->sf + (sf->nQ2 + i) * N_SF;
                 int j;
                 for (j = 0; j < N_SF; j++) {
                         const float f0 = sf0[j];
@@ -755,6 +726,54 @@ static enum ent_return esf_load_table(
                         if (f0 * f1 > 0.)
                                 table[j] = log(f0 / f1) * lxi;
                 }
+        }
+
+        return ENT_RETURN_SUCCESS;
+}
+
+/* Load a single SF table in ENT format. */
+static enum ent_return esf_load_table(
+    FILE * stream, int sf_index, struct ent_physics * physics)
+{
+
+        struct dis_sf * sf = NULL;
+        enum ent_return rc;
+
+        /* Read binary header */
+        int nx, nQ2;
+        if ((fread(&nx, sizeof(nx), 1, stream) != 1) ||
+            (fread(&nQ2, sizeof(nQ2), 1, stream) != 1))
+        {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+
+        /* Allocate memory for tables and map it. */
+        if ((sf = dis_sf_create(nx, nQ2)) == NULL) {
+                rc = ENT_RETURN_MEMORY_ERROR;
+                goto error;
+        }
+
+        /* Load the SFs data. */
+        if (fread(sf->x, sizeof(*sf->x), nx, stream) != nx) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+
+        if (fread(sf->Q2, sizeof(*sf->Q2), nQ2, stream) != nQ2) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+
+        const int nr = N_SF * nx * nQ2;
+        if (fread(sf->sf, sizeof(*sf->sf), nr, stream) != nr) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+
+        /* Compute lambda exponents. */
+        if ((rc = dis_sf_compute_lambda(sf)) != ENT_RETURN_SUCCESS) {
+                goto error;
         }
 
         /* Register the table */
@@ -772,6 +791,14 @@ static enum ent_return esf_load(FILE * stream, struct ent_physics ** physics)
         *physics = NULL;
         enum ent_return rc;
 
+        /* Check the version number. */
+        int version;
+        if ((fscanf(stream, "%d", &version) != 1) ||
+            (version != ENT_FORMAT_VERSION)) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+
         /* Skip metadata. */
         while (fgetc(stream) != 0x0) {
                 if (feof(stream)) {
@@ -787,12 +814,49 @@ static enum ent_return esf_load(FILE * stream, struct ent_physics ** physics)
                 goto error;
         }
 
-        /* Load tables */
+        /* Load SFs tables. */
         int i;
         for (i = 0; i < 8; i++) {
-                if ((rc = esf_load_table(stream, i, *physics)) !=
-                    ENT_RETURN_SUCCESS) {
-                        goto error;
+                if ((i == 3) || (i == 7)) {
+                        /* anti-neutrino NC case. */
+                        const int ii = i - 2;
+                        const int nx = (*physics)->sf[ii]->nx;
+                        const int nQ2 = (*physics)->sf[ii]->nQ2;
+                        if (((*physics)->sf[i] = dis_sf_create(nx, nQ2)) ==
+                            NULL) {
+                                rc = ENT_RETURN_MEMORY_ERROR;
+                                goto error;
+                        }
+
+                        /* Copy data but changing F3 sign. */
+                        memcpy((*physics)->sf[i]->x, (*physics)->sf[ii]->x,
+                            (*physics)->sf[i]->nx *
+                            sizeof(*(*physics)->sf[i]->x));
+                        memcpy((*physics)->sf[i]->Q2, (*physics)->sf[ii]->Q2,
+                            (*physics)->sf[i]->nQ2 *
+                            sizeof(*(*physics)->sf[i]->Q2));
+
+                        const float * sf0 = (*physics)->sf[ii]->sf;
+                        float * sf1 = (*physics)->sf[i]->sf;
+                        int j;
+                        for (j = 0; j < nx * nQ2; j++, sf0 += 3, sf1 += 3) {
+                                const float f2 = sf0[0] + sf0[1];
+                                const float f3 = sf0[1] - sf0[0];
+                                sf1[0] = 0.5 * (f2 + f3);
+                                sf1[1] = 0.5 * (f2 - f3);
+                                sf1[2] = sf0[2];
+                        }
+
+                        /* Compute lambda exponents. */
+                        if ((rc = dis_sf_compute_lambda(
+                            (*physics)->sf[i])) != ENT_RETURN_SUCCESS) {
+                                goto error;
+                        }
+                } else {
+                        if ((rc = esf_load_table(stream, i, *physics)) !=
+                            ENT_RETURN_SUCCESS) {
+                                goto error;
+                        }
                 }
         }
 
@@ -1388,10 +1452,10 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
         rc = ENT_RETURN_PATH_ERROR;
         if ((stream = fopen(pdf_or_sf_file, "rb")) == NULL) goto exit;
 
-        char tag[sizeof(ENT_SF_TAG)] = {0x0};
+        char tag[sizeof(ENT_FORMAT_TAG)] = {0x0};
         fread(tag, sizeof(tag) - 1, 1, stream);
-        if (strcmp(tag, ENT_SF_TAG) == 0) {
-                /* This is SF file. */
+        if (strcmp(tag, ENT_FORMAT_TAG) == 0) {
+                /* This is an ENT file. */
                 if ((rc = esf_load(stream, physics)) != ENT_RETURN_SUCCESS)
                         goto exit;
         } else {

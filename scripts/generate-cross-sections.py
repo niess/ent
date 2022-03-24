@@ -9,11 +9,11 @@ from scipy.interpolate import PchipInterpolator
 
 
 def cross_section_CSMS():
-    '''CSMS cross-section
+    """CSMS cross-section
 
        Reference:
          https://arxiv.org/abs/1106.3723
-    '''
+    """
     cs0 = numpy.array((
         (50, 0.32, 4.1, -2.3, -2.4, 0.10, 3.8, -1.9, -2.0),
         (100, 0.65, 3.8, -2.0, -2.0, 0.20, 3.5, -1.8, -1.8),
@@ -86,11 +86,11 @@ def cross_section_CSMS():
 
 
 def cross_section_BGR18():
-    '''BGR18 cross-section
+    """BGR18 cross-section
 
        Reference:
          https://arxiv.org/abs/1808.02034
-    '''
+    """
 
     cs0 = numpy.array((
         (5E+03,     25.5,     15.2),
@@ -158,13 +158,13 @@ def cross_section_BGR18():
 
 
 def initialise_ent():
-    '''Initialise the ENT library
-    '''
-    with open('include/ent.h') as f:
+    """Initialise the ENT library
+    """
+    with open("include/ent.h") as f:
         header = f.read()
 
     # Prune the header
-    header = re.sub(r'(?m)^#include.*\n?', '', header)
+    header = re.sub(r"(?m)^#include.*\n?", "", header)
     cpp = Preprocessor()
     cpp.parse(header)
     output = io.StringIO()
@@ -175,7 +175,7 @@ def initialise_ent():
     ffi.cdef(header)
 
     # Load the library
-    lib = ffi.dlopen('lib/libent.so')
+    lib = ffi.dlopen("lib/libent.so")
 
     return ffi, lib
 
@@ -183,8 +183,8 @@ ffi, lib = initialise_ent()
 
 
 def interpolate_cross_section(model):
-    '''Interpolate using PCHIP algorithm
-    '''
+    """Interpolate using PCHIP algorithm
+    """
     cs = model()
 
     p00 = PchipInterpolator(x=numpy.log(cs[:,0]), y=numpy.log(cs[:,1]))
@@ -195,29 +195,29 @@ def interpolate_cross_section(model):
     return p00, p01, p10, p11
 
 
-def build_table(model, pdf):
-    '''Build the cross-section tabulation, for ENT
-    '''
+def build_table(model):
+    """Build the cross-section tabulation, for ENT
+    """
 
     # Create the physics
-    physics = ffi.new('struct ent_physics *[1]')
+    physics = ffi.new("struct ent_physics *[1]")
     lib.ent_physics_create(
-        physics, f'share/pdf/{pdf}_0000.dat'.encode(), ffi.NULL)
+        physics, f"share/sf/{model}.ent".encode(), ffi.NULL)
 
     def cross_section(projectile, energy, Z, A, process):
-        cs = ffi.new('double [1]')
+        cs = ffi.new("double [1]")
         lib.ent_physics_cross_section(
             physics[0], projectile, energy, Z, A, process, cs);
         return float(cs[0])
 
     p00, p01, p10, p11 = interpolate_cross_section(
-        globals()[f'cross_section_{model}']
+        globals()[f"cross_section_{model}"]
     )
 
-    with open(f'share/cs/{model}.txt', 'w+') as f:
-        f.write(f'''# {model} cross-section
+    with open(f"share/cs/{model}.txt", "w+") as f:
+        f.write(f"""# {model} cross-section
 #
-# Generated using {pdf} PDF.
+# Generated using ENT.
 #
 # Reference:
 #    https://arxiv.org/abs/1106.3723
@@ -227,11 +227,11 @@ def build_table(model, pdf):
 #  (GeV)         charged-current        neutral-current           charged-current        neutral-current
 #              proton      neutron     proton      neutron      proton      neutron     proton      neutron
 #------------------------------------------------------------------------------------------------------------
-''')
+""")
         energies = numpy.logspace(2, 12, 201)
         pb = 1E-40 # pb -> m^2
-        fmt = ' '.join(4 * ('{:.5E}',))
-        fmt = '  '.join(('{:.5E}', fmt, fmt)) + os.linesep
+        fmt = " ".join(4 * ("{:.5E}",))
+        fmt = "  ".join(("{:.5E}", fmt, fmt)) + os.linesep
         for i, energy in enumerate(energies):
             c00 = numpy.exp(p00(numpy.log(energy))) * pb
             c01 = numpy.exp(p01(numpy.log(energy))) * pb
@@ -266,6 +266,6 @@ def build_table(model, pdf):
     lib.ent_physics_destroy(physics)
 
 
-if __name__ == '__main__':
-    build_table('CSMS', 'HERAPDF15NLO_EIG')
-    build_table('BGR18', 'NNPDF31sx_nlo_as_0118_LHCb_nf_6')
+if __name__ == "__main__":
+    build_table("CSMS")
+    build_table("BGR18")

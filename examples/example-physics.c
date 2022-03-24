@@ -54,7 +54,7 @@ int main(int nargc, char * argv[])
         ent_error_handler_set(&handle_error);
 
         /* Create a new Physics environment. */
-        ent_physics_create(&physics, "share/pdf/CT14nlo_0000.dat", NULL);
+        ent_physics_create(&physics, "share/sf/BGR18.ent", NULL);
 
         /* Get the total cross-section. */
         const double Emin = 1E+00;

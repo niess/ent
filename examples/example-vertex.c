@@ -62,8 +62,8 @@ int main(int nargc, char * argv[])
         ent_error_handler_set(&handle_error);
 
         /* Create a new Physics environment. */
-        ent_physics_create(&physics,
-            "share/pdf/HERAPDF15NLO_EIG_0000.dat", "share/cs/CSMS.txt");
+        ent_physics_create(
+            &physics, "share/sf/CSMS.ent", "share/cs/CSMS.txt");
 
         /* Compute the DCS by numeric integration. */
         const double ymin = 1E-07;
