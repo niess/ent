@@ -124,11 +124,11 @@ class StructureFunctions(NamedTuple):
         """Dump SFs data to a binary file"""
 
         # Pack the table header
-        nx, nq = len(self.x), len(self.q)
-        n = numpy.array((nx, nq), dtype="i4")
+        nx, nq, nf = len(self.x), len(self.q), 3
+        n = numpy.array((nx, nq, nf), dtype="i4")
         x = numpy.array(self.x, dtype="f4")
         Q2 = numpy.array(self.q**2, dtype="f4")
-        data = numpy.empty((nx, nq, 3), dtype="f4")
+        data = numpy.empty((nx, nq, nf), dtype="f4")
 
         # Redefine SFs for ENT
         s2 = apfel.GetSin2ThetaW()

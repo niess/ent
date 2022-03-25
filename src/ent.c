@@ -101,8 +101,10 @@ enum proget_index {
         PROGET_CC_NU_BAR_PROTON,
         /* Neutral current DIS of an anti-neutrino on a proton. */
         PROGET_NC_NU_BAR_PROTON,
+        /* Number of DIS PRoces-projectile-tarGET cases. */
+        PROGET_N_DIS,
         /* Elastic scattering of a nu_e on a an electron. */
-        PROGET_ELASTIC_NU_E,
+        PROGET_ELASTIC_NU_E = PROGET_N_DIS,
         /* Elastic scattering of an anti nu_e on a an electron. */
         PROGET_ELASTIC_NU_BAR_E,
         /* Elastic scattering of a nu_mu on a an electron. */
@@ -130,18 +132,18 @@ enum proget_index {
 /* Opaque Physics object. */
 struct ent_physics {
         /* Index to the PDF data. */
-        struct lha_pdf * pdf;
-        /* Index to the SFs data. */
-        struct dis_sf * sf[8];
+        struct grid * pdf;
+        /* Index to the DIS SFs data. */
+        struct grid * sf[PROGET_N_DIS];
         /* Entry point for the total cross-sections. */
         double * cs;
-        /* Entry point for the probability density function for DIS. */
+        /* Entry point for the bias probability density function for DIS. */
         double * dis_pdf;
-        /* Entry point for the cumulative density function for DIS. */
+        /* Entry point for the bias cumulative density function for DIS. */
         double * dis_cdf;
-        /* Sampling factors for x, in DIS. */
+        /* Sampling factors for x, in bias DIS. */
         double dis_xmin, dis_dlx, dis_rx;
-        /* Sampling factors for Q2, in DIS. */
+        /* Sampling factors for Q2, in bias DIS. */
         double dis_Q2min, dis_Q2max, dis_dlQ2, dis_rQ2;
         /* Placeholder for dynamic data. */
         char data[];
@@ -383,189 +385,149 @@ static void file_get_table(
         }
 }
 
-/* Containers for LHAPDFs data. */
-struct lha_pdf {
+/* Containers for (x, Q2) grid data. */
+struct grid {
         /* Link to the next table. */
-        struct lha_pdf * next;
+        struct grid * next;
         /* The table size. */
         int nx, nQ2, nf;
         /* Links to the data tables. */
-        float *x, *Q2, *lambda, *xfx;
+        float *x, *Q2, *lambda, *f;
         /* Placeholder for variable size data. */
         float data[];
 };
 
-/* Load a PDF from a .dat file in lhagrid1 format. */
-static enum ent_return lha_load_table(
-    struct file_buffer ** buffer, struct lha_pdf * previous)
+/* Create a new grid instance. */
+static struct grid * grid_create(int nx, int nQ2, int nf)
 {
-#define LHAPDF_NF_MAX 13
-        /* Locate the next data segment. */
-        for (;;) {
-                file_get_line(buffer, 0);
-                if (strlen((*buffer)->cursor) < 3) continue;
-                if (((*buffer)->cursor[0] == '-') &&
-                    ((*buffer)->cursor[1] == '-') &&
-                    ((*buffer)->cursor[2] == '-'))
-                        break;
-        }
-        long int pos = ftell((*buffer)->stream);
-
-        {
-                /* Check for end of file. */
-                char tmp[64];
-                if ((fgets(tmp, 63, (*buffer)->stream) == NULL) ||
-                    (feof((*buffer)->stream))) {
-                        return ENT_RETURN_SUCCESS;
-                } else if (fseek((*buffer)->stream, pos, SEEK_SET) != 0) {
-                        return ENT_RETURN_IO_ERROR;
-                }
-        }
-
-        /* Parse the table format. */
-        file_get_line(buffer, 0);
-        const int nx = file_count_words(*buffer);
-        file_get_line(buffer, 0);
-        const int nQ = file_count_words(*buffer);
-        file_get_line(buffer, 0);
-        const int nf = file_count_words(*buffer);
-        if ((nf != LHAPDF_NF_MAX - 2) && (nf != LHAPDF_NF_MAX)) {
-                return ENT_RETURN_FORMAT_ERROR;
-        }
-
-        /* Allocate and map the memory for the tables. */
         const unsigned int size_x =
             memory_padded_size(nx * sizeof(float), sizeof(double));
-        const unsigned int size_Q =
-            memory_padded_size(nQ * sizeof(float), sizeof(double));
+        const unsigned int size_Q2 =
+            memory_padded_size(nQ2 * sizeof(float), sizeof(double));
         const unsigned int size_lambda =
-            memory_padded_size(nf * nQ * sizeof(float), sizeof(double));
-        const unsigned int size_xfx =
-            memory_padded_size(nf * nx * nQ * sizeof(float), sizeof(double));
+            memory_padded_size(nf * nQ2 * sizeof(float), sizeof(double));
+        const unsigned int size_sf =
+            memory_padded_size(nf * nx * nQ2 * sizeof(float), sizeof(double));
         unsigned int size =
-            sizeof(struct lha_pdf) + size_x + size_Q + size_lambda + size_xfx;
-        struct lha_pdf * pdf;
-        if ((pdf = malloc(size)) == NULL) {
-                return ENT_RETURN_MEMORY_ERROR;
-        }
-        pdf->next = NULL;
-        previous->next = pdf;
+            sizeof(struct grid) + size_x + size_Q2 + size_lambda + size_sf;
 
-        pdf->nx = nx;
-        pdf->nQ2 = nQ;
-        pdf->nf = (nf - 1) / 2;
-        pdf->x = pdf->data;
-        pdf->Q2 = (float *)((char *)pdf->data + size_x);
-        pdf->lambda = (float *)((char *)pdf->Q2 + size_Q);
-        pdf->xfx = (float *)((char *)pdf->lambda + size_lambda);
-
-        /* Roll back in the file and copy the data to memory. */
-        if (fseek((*buffer)->stream, pos, SEEK_SET) != 0) {
-                return ENT_RETURN_IO_ERROR;
-        }
-        file_get_line(buffer, 0);
-
-        float row[LHAPDF_NF_MAX];
-        int index[LHAPDF_NF_MAX];
-        file_get_table(buffer, nx, pdf->x);
-        file_get_table(buffer, nQ, pdf->Q2);
-        file_get_table(buffer, nf, row);
-
-        int i;
-        for (i = 0; i < nQ; i++) pdf->Q2[i] *= pdf->Q2[i];
-        for (i = 0; i < nf; i++) {
-                if (row[i] == 21.)
-                        index[i] = pdf->nf;
-                else
-                        index[i] = (int)row[i] + pdf->nf;
-                if ((index[i] < 0) || (index[i] >= nf)) {
-                        return ENT_RETURN_FORMAT_ERROR;
-                }
+        struct grid * g;
+        if ((g = malloc(size)) == NULL) {
+                return NULL;
         }
 
-        float * table;
-        for (i = 0, table = pdf->xfx; i < nx * nQ; i++, table += nf) {
-                int j;
-                file_get_table(buffer, nf, row);
-                for (j = 0; j < nf; j++) table[index[j]] = row[j];
+        g->next = NULL;
+        g->nx = nx;
+        g->nQ2 = nQ2;
+        g->nf = nf;
+        g->x = g->data;
+        g->Q2 = (float *)((char *)g->data + size_x);
+        g->lambda = (float *)((char *)g->Q2 + size_Q2);
+        g->f = (float *)((char *)g->lambda + size_lambda);
+
+        return g;
+}
+
+/* Recursively destroy grid data. */
+static void grid_destroy(struct grid ** grid)
+{
+        if (*grid == NULL) return;
+
+        struct grid * g = *grid;
+        while (g != NULL) {
+                struct grid * next = g->next;
+                free(g);
+                g = next;
+        }
+        *grid = NULL;
+}
+
+/* Compute grid small x extrapolation. */
+static enum ent_return grid_compute_lambda(struct grid * g)
+{
+        const unsigned int size_lambda =
+            memory_padded_size(g->nf * g->nQ2 * sizeof(float), sizeof(double));
+        memset(g->lambda, 0x0, size_lambda);
+
+        if (g->x[0] <= 0.) {
+                return ENT_RETURN_SUCCESS;
         }
 
-        /* Tabulate the lambda exponents for the small x extrapolation. */
-        memset(pdf->lambda, 0x0, size_lambda);
-        if (pdf->x[0] <= 0.) return ENT_RETURN_SUCCESS;
-        float lxi = log(pdf->x[1] / pdf->x[0]);
+        float lxi = log(g->x[1] / g->x[0]);
         if (lxi <= 0.) {
                 return ENT_RETURN_FORMAT_ERROR;
         }
         lxi = 1. / lxi;
-        for (i = 0, table = pdf->lambda; i < nQ; i++, table += nf) {
-                const float * const xfx0 = pdf->xfx + i * nf;
-                const float * const xfx1 = pdf->xfx + (nQ + i) * nf;
+
+        int i;
+        float * table;
+        for (i = 0, table = g->lambda; i < g->nQ2; i++, table += g->nf) {
+                const float * const f0 = g->f + i * g->nf;
+                const float * const f1 = g->f + (g->nQ2 + i) * g->nf;
                 int j;
-                for (j = 0; j < nf; j++) {
-                        const float f0 = xfx0[j];
-                        const float f1 = xfx1[j];
-                        if ((f0 > 0.) && (f1 > 0.))
-                                table[j] = log(f0 / f1) * lxi;
+                for (j = 0; j < g->nf; j++) {
+                        const float f0j = f0[j];
+                        const float f1j = f1[j];
+                        if (f0j * f1j > 0.)
+                                table[j] = log(f0j / f1j) * lxi;
                 }
         }
 
         return ENT_RETURN_SUCCESS;
 }
 
-/* Load all PDFs from a .dat file in lhagrid1 format. */
-static enum ent_return lha_load(FILE * stream, struct ent_physics ** physics)
+/* Load a single grid in ENT format. */
+static enum ent_return grid_load(struct grid ** g_ptr, FILE * stream)
 {
-#define LHAPDF_NF_MAX 13
-        *physics = NULL;
+        struct grid * g = NULL;
         enum ent_return rc;
-        struct file_buffer * buffer = NULL;
-        struct lha_pdf head = {
-                .next = NULL
-        };
 
-        /* Redirect any subsequent file parsing error. */
-        jmp_buf env;
-        if (setjmp(env) != 0) {
-                rc = buffer->code;
-                goto exit;
-        }
-
-        /* Create the temporary file buffer. */
-        if ((rc = file_buffer_create(&buffer, stream, env)) !=
-            ENT_RETURN_SUCCESS)
-                goto exit;
-
-        /* Load the PDF set(s). */
-        struct lha_pdf * pdf;
-        for (pdf = &head; pdf != NULL; pdf = pdf->next) {
-                if ((rc = lha_load_table(&buffer, pdf)) != ENT_RETURN_SUCCESS)
-                        goto exit;
-        }
-        if (head.next == NULL) {
+        /* Read binary header. */
+        int nx, nQ2, nf;
+        if ((fread(&nx, sizeof(nx), 1, stream) != 1) ||
+            (fread(&nQ2, sizeof(nQ2), 1, stream) != 1) ||
+            (fread(&nf, sizeof(nf), 1, stream) != 1))
+        {
                 rc = ENT_RETURN_FORMAT_ERROR;
-                goto exit;
+                goto error;
         }
 
-        /* Create the physics wrapper. */
-        *physics = physics_create();
-        if (*physics == NULL) {
+        /* Allocate memory for tables and map it. */
+        if ((g = grid_create(nx, nQ2, nf)) == NULL) {
                 rc = ENT_RETURN_MEMORY_ERROR;
-        } else {
-                (*physics)->pdf = head.next;
+                goto error;
         }
-exit:
-        free(buffer);
-        if (rc != ENT_RETURN_SUCCESS) {
-                struct lha_pdf * p = head.next;
-                while (p != NULL) {
-                        struct lha_pdf * next = p->next;
-                        free(p);
-                        p = next;
-                }
-                free(*physics);
-                *physics = NULL;
+
+        /* Load the grid data. */
+        if (fread(g->x, sizeof(*g->x), nx, stream) != nx) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
         }
+
+        if (fread(g->Q2, sizeof(*g->Q2), nQ2, stream) != nQ2) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+
+        const int nr = nf * nx * nQ2;
+        if (fread(g->f, sizeof(*g->f), nr, stream) != nr) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+
+        /* Compute lambda exponents. */
+        if ((rc = grid_compute_lambda(g)) != ENT_RETURN_SUCCESS) {
+                goto error;
+        }
+
+        /* Register the table and return. */
+        *g_ptr = g;
+
+        return ENT_RETURN_SUCCESS;
+error:
+        free(g);
+        *g_ptr = NULL;
+
         return rc;
 }
 
@@ -580,213 +542,83 @@ static void table_bracket(const float * table, float value, int * p1, int * p2)
         if (*p2 - *p1 >= 2) table_bracket(table, value, p1, p2);
 }
 
-static void lha_pdf_compute(
-    const struct lha_pdf * pdf, float x, float Q2, float * xfx)
+static void grid_compute(
+    const struct grid * g, float x, float Q2, float * f)
 {
-        memset(xfx, 0x0, LHAPDF_NF_MAX * sizeof(*xfx));
+        memset(f, 0x0, g->nf * sizeof(*f));
 
         /* Check the bounds. */
-        while ((Q2 < pdf->Q2[0]) || (Q2 >= pdf->Q2[pdf->nQ2 - 1]) ||
-            (x >= pdf->x[pdf->nx - 1])) {
-                pdf = pdf->next;
-                if (pdf == NULL) return;
+        while ((Q2 < g->Q2[0]) || (Q2 >= g->Q2[g->nQ2 - 1]) ||
+            (x >= g->x[g->nx - 1])) {
+                g = g->next;
+                if (g == NULL) return;
         }
 
-        if (x < pdf->x[0]) {
+        if (x < g->x[0]) {
                 /* Extrapolate with a power law for small x values, i.e.
-                 * x * f(x) ~ 1 / x**lambda(Q2).
+                 * f(x) ~ 1 / x**lambda(Q2).
                  */
                 int iQ0, iQ1;
                 float hQ;
-                if (Q2 >= pdf->Q2[pdf->nQ2 - 1]) {
-                        iQ0 = iQ1 = pdf->nQ2 - 1;
+                if (Q2 >= g->Q2[g->nQ2 - 1]) {
+                        iQ0 = iQ1 = g->nQ2 - 1;
                         hQ = 1.;
                 } else {
                         iQ0 = 0;
-                        iQ1 = pdf->nQ2 - 1;
-                        table_bracket(pdf->Q2, Q2, &iQ0, &iQ1);
-                        hQ =
-                            (Q2 - pdf->Q2[iQ0]) / (pdf->Q2[iQ1] - pdf->Q2[iQ0]);
+                        iQ1 = g->nQ2 - 1;
+                        table_bracket(g->Q2, Q2, &iQ0, &iQ1);
+                        hQ = (Q2 - g->Q2[iQ0]) / (g->Q2[iQ1] - g->Q2[iQ0]);
                 }
 
-                int i, nf = 2 * pdf->nf + 1;
-                const float * const lambda0 = pdf->lambda + iQ0 * nf;
-                const float * const lambda1 = pdf->lambda + iQ1 * nf;
-                const float * const xfx0 = pdf->xfx + iQ0 * nf;
-                const float * const xfx1 = pdf->xfx + iQ1 * nf;
-                for (i = 0; i < nf; i++) {
+                int i;
+                const float * const lambda0 = g->lambda + iQ0 * g->nf;
+                const float * const lambda1 = g->lambda + iQ1 * g->nf;
+                const float * const f0 = g->f + iQ0 * g->nf;
+                const float * const f1 = g->f + iQ1 * g->nf;
+                for (i = 0; i < g->nf; i++) {
                         const float y0 = lambda0[i];
                         const float y1 = lambda1[i];
                         if ((y0 <= 0.) || (y1 <= 0.))
-                                xfx[i] = 0.;
+                                f[i] = 0.;
                         else {
                                 const float lambda = y0 * (1. - hQ) + y1 * hQ;
-                                xfx[i] = (xfx0[i] * (1. - hQ) + xfx1[i] * hQ) *
-                                    pow(x / pdf->x[0], -lambda);
+                                f[i] = (f0[i] * (1. - hQ) + f1[i] * hQ) *
+                                    pow(x / g->x[0], -lambda);
                         }
                 }
         } else {
                 /* We are within the table bounds. Let's locate the bracketing
                  * table rows.
                  */
-                int ix0 = 0, ix1 = pdf->nx - 1, iQ0 = 0, iQ1 = pdf->nQ2 - 1;
-                table_bracket(pdf->x, x, &ix0, &ix1);
-                table_bracket(pdf->Q2, Q2, &iQ0, &iQ1);
-                const float hx =
-                    (x - pdf->x[ix0]) / (pdf->x[ix1] - pdf->x[ix0]);
-                const float hQ =
-                    (Q2 - pdf->Q2[iQ0]) / (pdf->Q2[iQ1] - pdf->Q2[iQ0]);
+                int ix0 = 0, ix1 = g->nx - 1, iQ0 = 0, iQ1 = g->nQ2 - 1;
+                table_bracket(g->x, x, &ix0, &ix1);
+                table_bracket(g->Q2, Q2, &iQ0, &iQ1);
+                const float hx = (x - g->x[ix0]) / (g->x[ix1] - g->x[ix0]);
+                const float hQ = (Q2 - g->Q2[iQ0]) / (g->Q2[iQ1] - g->Q2[iQ0]);
 
                 /* Interpolate the PDFs. */
-                int i, nf = 2 * pdf->nf + 1;
-                const float * const xfx00 =
-                    pdf->xfx + (ix0 * pdf->nQ2 + iQ0) * nf;
-                const float * const xfx01 =
-                    pdf->xfx + (ix0 * pdf->nQ2 + iQ1) * nf;
-                const float * const xfx10 =
-                    pdf->xfx + (ix1 * pdf->nQ2 + iQ0) * nf;
-                const float * const xfx11 =
-                    pdf->xfx + (ix1 * pdf->nQ2 + iQ1) * nf;
+                int i;
+                const float * const f00 =
+                    g->f + (ix0 * g->nQ2 + iQ0) * g->nf;
+                const float * const f01 =
+                    g->f + (ix0 * g->nQ2 + iQ1) * g->nf;
+                const float * const f10 =
+                    g->f + (ix1 * g->nQ2 + iQ0) * g->nf;
+                const float * const f11 =
+                    g->f + (ix1 * g->nQ2 + iQ1) * g->nf;
                 const float r00 = (1. - hx) * (1. - hQ);
                 const float r01 = (1. - hx) * hQ;
                 const float r10 = hx * (1. - hQ);
                 const float r11 = hx * hQ;
-                for (i = 0; i < nf; i++)
-                        xfx[i] = r00 * xfx00[i] + r01 * xfx01[i] +
-                            r10 * xfx10[i] + r11 * xfx11[i];
+                for (i = 0; i < g->nf; i++)
+                        f[i] = r00 * f00[i] + r01 * f01[i] +
+                               r10 * f10[i] + r11 * f11[i];
         }
 }
 
-/* Containers for DIS SF data. */
-struct dis_sf {
-        /* The table size. */
-        int nx, nQ2;
-        /* Links to the data tables. */
-        float *x, *Q2, *lambda, *sf;
-        /* Placeholder for variable size data. */
-        float data[];
-};
-
-/* Create a new table instance. */
-static struct dis_sf * dis_sf_create(int nx, int nQ2)
-{
-#define N_SF 3
-        const unsigned int size_x =
-            memory_padded_size(nx * sizeof(float), sizeof(double));
-        const unsigned int size_Q2 =
-            memory_padded_size(nQ2 * sizeof(float), sizeof(double));
-        const unsigned int size_lambda =
-            memory_padded_size(N_SF * nQ2 * sizeof(float), sizeof(double));
-        const unsigned int size_sf =
-            memory_padded_size(N_SF * nx * nQ2 * sizeof(float), sizeof(double));
-        unsigned int size =
-            sizeof(struct dis_sf) + size_x + size_Q2 + size_lambda + size_sf;
-
-        struct dis_sf * sf;
-        if ((sf = malloc(size)) == NULL) {
-                return NULL;
-        }
-
-        sf->nx = nx;
-        sf->nQ2 = nQ2;
-        sf->x = sf->data;
-        sf->Q2 = (float *)((char *)sf->data + size_x);
-        sf->lambda = (float *)((char *)sf->Q2 + size_Q2);
-        sf->sf = (float *)((char *)sf->lambda + size_lambda);
-
-        return sf;
-}
-
-/* Compute small x extrapolation. */
-static enum ent_return dis_sf_compute_lambda(struct dis_sf * sf)
-{
-        const unsigned int size_lambda =
-            memory_padded_size(N_SF * sf->nQ2 * sizeof(float), sizeof(double));
-        memset(sf->lambda, 0x0, size_lambda);
-
-        if (sf->x[0] <= 0.) {
-                return ENT_RETURN_SUCCESS;
-        }
-
-        float lxi = log(sf->x[1] / sf->x[0]);
-        if (lxi <= 0.) {
-                return ENT_RETURN_FORMAT_ERROR;
-        }
-        lxi = 1. / lxi;
-
-        int i;
-        float * table;
-        for (i = 0, table = sf->lambda; i < sf->nQ2; i++, table += N_SF) {
-                const float * const sf0 = sf->sf + i * N_SF;
-                const float * const sf1 = sf->sf + (sf->nQ2 + i) * N_SF;
-                int j;
-                for (j = 0; j < N_SF; j++) {
-                        const float f0 = sf0[j];
-                        const float f1 = sf1[j];
-                        if (f0 * f1 > 0.)
-                                table[j] = log(f0 / f1) * lxi;
-                }
-        }
-
-        return ENT_RETURN_SUCCESS;
-}
-
-/* Load a single SF table in ENT format. */
-static enum ent_return esf_load_table(
-    FILE * stream, int sf_index, struct ent_physics * physics)
-{
-
-        struct dis_sf * sf = NULL;
-        enum ent_return rc;
-
-        /* Read binary header */
-        int nx, nQ2;
-        if ((fread(&nx, sizeof(nx), 1, stream) != 1) ||
-            (fread(&nQ2, sizeof(nQ2), 1, stream) != 1))
-        {
-                rc = ENT_RETURN_FORMAT_ERROR;
-                goto error;
-        }
-
-        /* Allocate memory for tables and map it. */
-        if ((sf = dis_sf_create(nx, nQ2)) == NULL) {
-                rc = ENT_RETURN_MEMORY_ERROR;
-                goto error;
-        }
-
-        /* Load the SFs data. */
-        if (fread(sf->x, sizeof(*sf->x), nx, stream) != nx) {
-                rc = ENT_RETURN_FORMAT_ERROR;
-                goto error;
-        }
-
-        if (fread(sf->Q2, sizeof(*sf->Q2), nQ2, stream) != nQ2) {
-                rc = ENT_RETURN_FORMAT_ERROR;
-                goto error;
-        }
-
-        const int nr = N_SF * nx * nQ2;
-        if (fread(sf->sf, sizeof(*sf->sf), nr, stream) != nr) {
-                rc = ENT_RETURN_FORMAT_ERROR;
-                goto error;
-        }
-
-        /* Compute lambda exponents. */
-        if ((rc = dis_sf_compute_lambda(sf)) != ENT_RETURN_SUCCESS) {
-                goto error;
-        }
-
-        /* Register the table */
-        physics->sf[sf_index] = sf;
-
-        return ENT_RETURN_SUCCESS;
-error:
-        free(sf);
-        return rc;
-}
-
-/* Load SFs from a .esf file, i.e. in ENT format. */
-static enum ent_return esf_load(FILE * stream, struct ent_physics ** physics)
+/* Load DIS physics from an ENT file. */
+static enum ent_return physics_load(
+    struct ent_physics ** physics, FILE * stream)
 {
         *physics = NULL;
         enum ent_return rc;
@@ -822,7 +654,7 @@ static enum ent_return esf_load(FILE * stream, struct ent_physics ** physics)
                         const int ii = i - 2;
                         const int nx = (*physics)->sf[ii]->nx;
                         const int nQ2 = (*physics)->sf[ii]->nQ2;
-                        if (((*physics)->sf[i] = dis_sf_create(nx, nQ2)) ==
+                        if (((*physics)->sf[i] = grid_create(nx, nQ2, 3)) ==
                             NULL) {
                                 rc = ENT_RETURN_MEMORY_ERROR;
                                 goto error;
@@ -836,8 +668,8 @@ static enum ent_return esf_load(FILE * stream, struct ent_physics ** physics)
                             (*physics)->sf[i]->nQ2 *
                             sizeof(*(*physics)->sf[i]->Q2));
 
-                        const float * sf0 = (*physics)->sf[ii]->sf;
-                        float * sf1 = (*physics)->sf[i]->sf;
+                        const float * sf0 = (*physics)->sf[ii]->f;
+                        float * sf1 = (*physics)->sf[i]->f;
                         int j;
                         for (j = 0; j < nx * nQ2; j++, sf0 += 3, sf1 += 3) {
                                 const float f2 = sf0[0] + sf0[1];
@@ -848,12 +680,12 @@ static enum ent_return esf_load(FILE * stream, struct ent_physics ** physics)
                         }
 
                         /* Compute lambda exponents. */
-                        if ((rc = dis_sf_compute_lambda(
+                        if ((rc = grid_compute_lambda(
                             (*physics)->sf[i])) != ENT_RETURN_SUCCESS) {
                                 goto error;
                         }
                 } else {
-                        if ((rc = esf_load_table(stream, i, *physics)) !=
+                        if ((rc = grid_load((*physics)->sf + i, stream)) !=
                             ENT_RETURN_SUCCESS) {
                                 goto error;
                         }
@@ -867,82 +699,148 @@ error:
         return rc;
 }
 
-static void dis_sf_compute(
-    const struct dis_sf * sf, float x, float Q2, float * values)
+/* Load a PDF from a .dat file in lhagrid1 format. */
+static enum ent_return lha_load_table(
+    struct file_buffer ** buffer, struct grid ** pdf_ptr, int * eof)
 {
-        memset(values, 0x0, N_SF * sizeof(*values));
+#define LHAPDF_NF_MAX 13
+        /* Locate the next data segment. */
+        for (;;) {
+                file_get_line(buffer, 0);
+                if (strlen((*buffer)->cursor) < 3) continue;
+                if (((*buffer)->cursor[0] == '-') &&
+                    ((*buffer)->cursor[1] == '-') &&
+                    ((*buffer)->cursor[2] == '-'))
+                        break;
+        }
+        long int pos = ftell((*buffer)->stream);
 
-        /* Check the bounds. */
-        if ((Q2 < sf->Q2[0]) || (Q2 >= sf->Q2[sf->nQ2 - 1]) ||
-            (x >= sf->x[sf->nx - 1])) {
-                return;
+        {
+                /* Check for end of file. */
+                *eof = 0;
+                char tmp[64];
+                if ((fgets(tmp, 63, (*buffer)->stream) == NULL) ||
+                    (feof((*buffer)->stream))) {
+                        *eof = 1;
+                        return ENT_RETURN_SUCCESS;
+                } else if (fseek((*buffer)->stream, pos, SEEK_SET) != 0) {
+                        return ENT_RETURN_IO_ERROR;
+                }
         }
 
-        if (x < sf->x[0]) {
-                /* Extrapolate with a power law for small x values, i.e.
-                 * F ~ 1 / x**lambda(Q2).
-                 */
-                int iQ0, iQ1;
-                float hQ;
-                if (Q2 >= sf->Q2[sf->nQ2 - 1]) {
-                        iQ0 = iQ1 = sf->nQ2 - 1;
-                        hQ = 1.;
-                } else {
-                        iQ0 = 0;
-                        iQ1 = sf->nQ2 - 1;
-                        table_bracket(sf->Q2, Q2, &iQ0, &iQ1);
-                        hQ =
-                            (Q2 - sf->Q2[iQ0]) / (sf->Q2[iQ1] - sf->Q2[iQ0]);
-                }
+        /* Parse the table format. */
+        file_get_line(buffer, 0);
+        const int nx = file_count_words(*buffer);
+        file_get_line(buffer, 0);
+        const int nQ = file_count_words(*buffer);
+        file_get_line(buffer, 0);
+        const int nf = file_count_words(*buffer);
+        if ((nf != LHAPDF_NF_MAX - 2) && (nf != LHAPDF_NF_MAX)) {
+                return ENT_RETURN_FORMAT_ERROR;
+        }
 
-                int i;
-                const float * const lambda0 = sf->lambda + iQ0 * N_SF;
-                const float * const lambda1 = sf->lambda + iQ1 * N_SF;
-                const float * const sf0 = sf->sf + iQ0 * N_SF;
-                const float * const sf1 = sf->sf + iQ1 * N_SF;
-                for (i = 0; i < N_SF; i++) {
-                        const float y0 = lambda0[i];
-                        const float y1 = lambda1[i];
-                        if ((y0 <= 0.) || (y1 <= 0.))
-                                values[i] = 0.;
-                        else {
-                                const float lambda = y0 * (1. - hQ) + y1 * hQ;
-                                values[i] = (sf0[i] * (1. - hQ) + sf1[i] * hQ) *
-                                    pow(x / sf->x[0], -lambda);
+        /* Allocate and map the memory for the tables. */
+        struct grid * pdf;
+        if ((*pdf_ptr = grid_create(nx, nQ, nf)) == NULL) {
+                return ENT_RETURN_MEMORY_ERROR;
+        } else {
+                pdf = *pdf_ptr;
+        }
+
+        /* Roll back in the file and copy the data to memory. */
+        if (fseek((*buffer)->stream, pos, SEEK_SET) != 0) {
+                return ENT_RETURN_IO_ERROR;
+        }
+        file_get_line(buffer, 0);
+
+        float row[nf];
+        int index[nf];
+        file_get_table(buffer, nx, pdf->x);
+        file_get_table(buffer, nQ, pdf->Q2);
+        file_get_table(buffer, nf, row);
+
+        int i;
+        for (i = 0; i < nQ; i++) pdf->Q2[i] *= pdf->Q2[i];
+        for (i = 0; i < nf; i++) {
+                if (row[i] == 21.)
+                        index[i] = (pdf->nf - 1) / 2;
+                else
+                        index[i] = (int)row[i] + (nf - 1) / 2;
+                if ((index[i] < 0) || (index[i] >= nf)) {
+                        return ENT_RETURN_FORMAT_ERROR;
+                }
+        }
+
+        float * table;
+        for (i = 0, table = pdf->f; i < nx * nQ; i++, table += nf) {
+                int j;
+                file_get_table(buffer, nf, row);
+                for (j = 0; j < nf; j++) table[index[j]] = row[j];
+        }
+
+        /* Tabulate the lambda exponents for the small x extrapolation. */
+        return grid_compute_lambda(pdf);
+
+#undef LHAPDF_NF_MAX
+}
+
+/* Load all PDFs from a .dat file in lhagrid1 format. */
+static enum ent_return lha_load(struct ent_physics ** physics, FILE * stream)
+{
+        *physics = NULL;
+        enum ent_return rc;
+        struct file_buffer * buffer = NULL;
+        struct grid * head = NULL;
+
+        /* Redirect any subsequent file parsing error. */
+        jmp_buf env;
+        if (setjmp(env) != 0) {
+                rc = buffer->code;
+                goto exit;
+        }
+
+        /* Create the temporary file buffer. */
+        if ((rc = file_buffer_create(&buffer, stream, env)) !=
+            ENT_RETURN_SUCCESS)
+                goto exit;
+
+        /* Load the PDF set(s). */
+        struct grid * pdf = NULL;
+        int eof;
+        for (eof = 0; !eof;) {
+                struct grid * g;
+                if ((rc = lha_load_table(&buffer, &g, &eof)) !=
+                    ENT_RETURN_SUCCESS)
+                        goto exit;
+                if (!eof) {
+                        if (head == NULL) {
+                                head = pdf = g;
+                        } else if (pdf != NULL) {
+                                pdf->next = g;
+                                pdf = g;
                         }
                 }
-        } else {
-                /* We are within the table bounds. Let's locate the bracketing
-                 * table rows.
-                 */
-                int ix0 = 0, ix1 = sf->nx - 1, iQ0 = 0, iQ1 = sf->nQ2 - 1;
-                table_bracket(sf->x, x, &ix0, &ix1);
-                table_bracket(sf->Q2, Q2, &iQ0, &iQ1);
-                const float hx =
-                    (x - sf->x[ix0]) / (sf->x[ix1] - sf->x[ix0]);
-                const float hQ =
-                    (Q2 - sf->Q2[iQ0]) / (sf->Q2[iQ1] - sf->Q2[iQ0]);
-
-                /* Interpolate the PDFs. */
-                int i;
-                const float * const sf00 =
-                    sf->sf + (ix0 * sf->nQ2 + iQ0) * N_SF;
-                const float * const sf01 =
-                    sf->sf + (ix0 * sf->nQ2 + iQ1) * N_SF;
-                const float * const sf10 =
-                    sf->sf + (ix1 * sf->nQ2 + iQ0) * N_SF;
-                const float * const sf11 =
-                    sf->sf + (ix1 * sf->nQ2 + iQ1) * N_SF;
-                const float r00 = (1. - hx) * (1. - hQ);
-                const float r01 = (1. - hx) * hQ;
-                const float r10 = hx * (1. - hQ);
-                const float r11 = hx * hQ;
-
-                for (i = 0; i < N_SF; i++) {
-                        values[i] = r00 * sf00[i] + r01 * sf01[i] +
-                            r10 * sf10[i] + r11 * sf11[i];
-                }
         }
+        if (head == NULL) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto exit;
+        }
+
+        /* Create the physics wrapper. */
+        *physics = physics_create();
+        if (*physics == NULL) {
+                rc = ENT_RETURN_MEMORY_ERROR;
+        } else {
+                (*physics)->pdf = head;
+        }
+exit:
+        free(buffer);
+        if (rc != ENT_RETURN_SUCCESS) {
+                grid_destroy(&head);
+                free(*physics);
+                *physics = NULL;
+        }
+        return rc;
 }
 
 /* Compute SFs for DIS. */
@@ -952,13 +850,13 @@ static void dis_compute_sf(struct ent_physics * physics,
 {
         if (physics->pdf != NULL) {
                 /* Get the PDFs. */
-                const struct lha_pdf * const pdf = physics->pdf;
-                float xfx[LHAPDF_NF_MAX];
-                lha_pdf_compute(pdf, x, Q2, xfx);
+                const struct grid * const pdf = physics->pdf;
+                float xfx[pdf->nf];
+                grid_compute(pdf, x, Q2, xfx);
 
                 /* Compute the relevant structure functions. */
                 const int eps = (projectile > 0) ? 1 : -1;
-                const int nf = pdf->nf;
+                const int nf = (pdf->nf - 1) / 2;
                 const double N = A - Z; /* Number of neutrons. */
                 if (process == ENT_PROCESS_DIS_CC) {
                         /* Charged current DIS process. */
@@ -1012,21 +910,23 @@ static void dis_compute_sf(struct ent_physics * physics,
                 const int itab =
                     (process == ENT_PROCESS_DIS_NC) + 2 * (projectile < 0);
                 const double N = A - Z; /* Number of neutrons. */
-                float tmp[N_SF];
 
-                memset(sf, 0x0, N_SF * sizeof(*sf));
+                memset(sf, 0x0, 3 * sizeof(*sf));
                 if (N > 0.) {
-                        dis_sf_compute(physics->sf[itab], x, Q2, tmp);
+                        const struct grid * const g = physics->sf[itab];
+                        float tmp[3];
+                        grid_compute(g, x, Q2, tmp);
                         int i;
-                        for (i = 0; i < N_SF; i++) sf[i] += N * tmp[i];
+                        for (i = 0; i < 3; i++) sf[i] += N * tmp[i];
                 }
                 if (Z > 0.) {
-                        dis_sf_compute(physics->sf[itab + 4], x, Q2, tmp);
+                        const struct grid * const g = physics->sf[itab + 4];
+                        float tmp[3];
+                        grid_compute(g, x, Q2, tmp);
                         int i;
-                        for (i = 0; i < N_SF; i++) sf[i] += Z * tmp[i];
+                        for (i = 0; i < 3; i++) sf[i] += Z * tmp[i];
                 }
         }
-#undef N_SF
 }
 
 /* DCS for Deep Inelastic Scattering (DIS) on nucleons. */
@@ -1288,30 +1188,27 @@ static void physics_tabulate_dis(struct ent_physics * physics)
         double xmin = DBL_MAX, xmax = -DBL_MAX;
         double Q2min = DBL_MAX, Q2max = -DBL_MAX;
         if (physics->pdf != NULL) {
-                struct lha_pdf * p;
-                for (p = physics->pdf; p != NULL; p = p->next) {
-                        if (p->x[0] < xmin) xmin = p->x[0];
-                        if (p->Q2[0] < Q2min) Q2min = p->Q2[0];
-                        const double tmp0 = p->x[p->nx - 1];
+                struct grid * g;
+                for (g = physics->pdf; g != NULL; g = g->next) {
+                        if (g->x[0] < xmin) xmin = g->x[0];
+                        if (g->Q2[0] < Q2min) Q2min = g->Q2[0];
+                        const double tmp0 = g->x[g->nx - 1];
                         if (tmp0 > xmax) xmax = tmp0;
-                        const double tmp1 = p->Q2[p->nQ2 - 1];
+                        const double tmp1 = g->Q2[g->nQ2 - 1];
                         if (tmp1 > Q2max) Q2max = tmp1;
                 }
-        } else {
-                int i;
-                for (i = 0; i < 8; i++) {
-                        const int ix = physics->sf[i]->nx - 1;
-                        if (physics->sf[i]->x[0] < xmin)
-                                xmin = physics->sf[i]->x[0];
-                        if (physics->sf[i]->x[ix] > xmax)
-                                xmax = physics->sf[i]->x[ix];
+        }
 
-                        const int iq = physics->sf[i]->nQ2 - 1;
-                        if (physics->sf[i]->Q2[0] < Q2min)
-                                Q2min = physics->sf[i]->Q2[0];
-                        if (physics->sf[i]->Q2[iq] > Q2max)
-                                Q2max = physics->sf[i]->Q2[iq];
-                }
+        int i;
+        for (i = 0; i < PROGET_N_DIS; i++) if (physics->sf[i] != NULL) {
+                struct grid * g = physics->sf[i];
+                const int ix = g->nx - 1;
+                if (g->x[0] < xmin) xmin = g->x[0];
+                if (g->x[ix] > xmax) xmax = g->x[ix];
+
+                const int iq = g->nQ2 - 1;
+                if (g->Q2[0] < Q2min) Q2min = g->Q2[0];
+                if (g->Q2[iq] > Q2max) Q2max = g->Q2[iq];
         }
 
         /* Compute the sampling factors. */
@@ -1456,12 +1353,12 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
         fread(tag, sizeof(tag) - 1, 1, stream);
         if (strcmp(tag, ENT_FORMAT_TAG) == 0) {
                 /* This is an ENT file. */
-                if ((rc = esf_load(stream, physics)) != ENT_RETURN_SUCCESS)
+                if ((rc = physics_load(physics, stream)) != ENT_RETURN_SUCCESS)
                         goto exit;
         } else {
                 /* This must be a PDF file in LHA format. */
                 fseek(stream, 0, SEEK_SET);
-                if ((rc = lha_load(stream, physics)) != ENT_RETURN_SUCCESS)
+                if ((rc = lha_load(physics, stream)) != ENT_RETURN_SUCCESS)
                         goto exit;
         }
         fclose(stream);
@@ -1492,15 +1389,15 @@ void ent_physics_destroy(struct ent_physics ** physics)
 {
         if ((physics == NULL) || (*physics == NULL)) return;
 
-        struct lha_pdf * p = (*physics)->pdf;
-        while (p != NULL) {
-                struct lha_pdf * next = p->next;
-                free(p);
-                p = next;
+        struct grid * g = (*physics)->pdf;
+        while (g != NULL) {
+                struct grid * next = g->next;
+                free(g);
+                g = next;
         }
 
         int i;
-        for (i = 0; i < sizeof((*physics)->sf) / sizeof(*(*physics)->sf); i++) {
+        for (i = 0; i < PROGET_N_DIS; i++) {
                 free((*physics)->sf[i]);
         }
 
@@ -1745,15 +1642,16 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
                 }
         } else {
                 /* Compute the PDF and return. */
-                const struct lha_pdf * const pdf = physics->pdf;
-                float xfx[LHAPDF_NF_MAX];
-                lha_pdf_compute(pdf, x, Q2, xfx);
+                const struct grid * const pdf = physics->pdf;
+                float xfx[pdf->nf];
+                grid_compute(pdf, x, Q2, xfx);
 
                 const int nf = (ENT_N_PARTONS - 1) / 2;
+                const int pdf_nf = (pdf->nf - 1) / 2;
                 if ((parton >= -nf) && (parton <= nf)) {
                         /* Return only the requested PDF */
-                        if (abs(parton) <= pdf->nf) {
-                                *value = xfx[pdf->nf + parton] / x;
+                        if (abs(parton) <= pdf_nf) {
+                                *value = xfx[pdf_nf + parton] / x;
                         } else {
                                 *value = 0.;
                         }
@@ -1761,9 +1659,9 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
                         /* Return all PDFs */
                         int i;
                         for (i = 0; i < ENT_N_PARTONS; i++) {
-                                const int ii = pdf->nf + i - nf;
+                                const int ii = pdf_nf + i - nf;
                                 value[i] =
-                                    ((ii >= 0) && (ii < 2 * pdf->nf + 1)) ?
+                                    ((ii >= 0) && (ii < 2 * pdf_nf + 1)) ?
                                     xfx[ii] : 0.;
                         }
                 } else {
