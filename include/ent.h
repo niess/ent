@@ -99,8 +99,12 @@ enum ent_process {
         ENT_PROCESS_ELASTIC = 0,
         /** The neutral current DIS process. */
         ENT_PROCESS_DIS_NC,
-        /** The charged current DIS process. */
+        /** The charged current DIS process (all contributions). */
         ENT_PROCESS_DIS_CC,
+        /** The charged current DIS process (w/o top production). */
+        ENT_PROCESS_DIS_CC_OTHER,
+        /** The charged current DIS process (top production only). */
+        ENT_PROCESS_DIS_CC_TOP,
         /** The inverse muon decay, e.g. nu_mu + e- -> nu_e + mu-. */
         ENT_PROCESS_INVERSE_MUON,
         /** The inverse tau decay, e.g. nu_tau + e- -> nu_e + tau-. */

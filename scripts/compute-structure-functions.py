@@ -6,6 +6,7 @@ Requires:
     - APFEL: https://github.com/scarrazza/apfel
 """
 import argparse
+from enum import IntEnum
 import numpy
 from pathlib import Path
 from typing import NamedTuple
@@ -18,7 +19,7 @@ import lhapdf
 FORMAT_TAG = "/ent/"
 
 """ENT data format version"""
-FORMAT_VERSION = 0
+FORMAT_VERSION = 1
 
 
 """Physics constants"""
@@ -70,6 +71,12 @@ class MetaData(NamedTuple):
             f.write(b"\0")
 
 
+class Contribution(IntEnum):
+    """Contributions to SFs"""
+    TOTAL = 0
+    TOP = 1
+
+
 class StructureFunctions(NamedTuple):
     """Container for SFs data"""
     target: str
@@ -105,7 +112,10 @@ class StructureFunctions(NamedTuple):
         apfel.InitializeAPFEL_DIS()
 
         # Compute SFs over the grid
-        shape = (len(q), len(x))
+        if process == "CC":
+            shape = (len(q), len(x), 2)
+        else:
+            shape = (len(q), len(x))
         F2 = numpy.empty(shape)
         xF3 = numpy.empty(shape)
         FL = numpy.empty(shape)
@@ -113,15 +123,32 @@ class StructureFunctions(NamedTuple):
             apfel.SetAlphaQCDRef(pdf.alphasQ(qi), qi)
             apfel.ComputeStructureFunctionsAPFEL(qi, qi)
 
-            for j, xj in enumerate(x):
-                F2[i, j] = apfel.F2total(xj)
-                xF3[i, j] = apfel.F3total(xj)
-                FL[i, j] = apfel.FLtotal(xj)
+            if process == "CC":
+                for j, xj in enumerate(x):
+                    f2t = apfel.F2top(xj)
+                    xf3t = apfel.F3top(xj)
+                    flt = apfel.FLtop(xj)
+                    F2[i, j, Contribution.TOTAL] = apfel.F2total(xj) - f2t
+                    xF3[i, j, Contribution.TOTAL] = apfel.F3total(xj) - xf3t
+                    FL[i, j, Contribution.TOTAL] = apfel.FLtotal(xj) - flt
+                    F2[i, j, Contribution.TOP] = f2t
+                    xF3[i, j, Contribution.TOP] = xf3t
+                    FL[i, j, Contribution.TOP] = flt
+            else:
+                for j, xj in enumerate(x):
+                    F2[i, j] = apfel.F2total(xj)
+                    xF3[i, j] = apfel.F3total(xj)
+                    FL[i, j] = apfel.FLtotal(xj)
 
         return cls(target, projectile, process, rho, x, q, F2, xF3, FL)
 
-    def dump(self, path):
+    def dump(self, path, contrib=None):
         """Dump SFs data to a binary file"""
+
+        if contrib is None:
+            c = Contribution.TOTAL # Dump total SFs by default
+        else:
+            c = contrib
 
         # Pack the table header
         nx, nq, nf = len(self.x), len(self.q), 3
@@ -136,11 +163,16 @@ class StructureFunctions(NamedTuple):
             (4 * (Q2 + MZ**2) / Q2 * s2 * (1 - s2) / self.rho)**2
 
         sgn = 1 if self.projectile == "neutrino" else -1
-
         xF3 = sgn * self.xF3
-        data[:,:,0] = fct * (self.F2 + xF3).T
-        data[:,:,1] = fct * (self.F2 - xF3).T
-        data[:,:,2] = fct * self.FL.T
+
+        if self.process == "CC":
+            data[:,:,0] = fct * (self.F2[:,:,c] + xF3[:,:,c]).T
+            data[:,:,1] = fct * (self.F2[:,:,c] - xF3[:,:,c]).T
+            data[:,:,2] = fct * self.FL[:,:,c].T
+        else:
+            data[:,:,0] = fct * (self.F2 + xF3).T
+            data[:,:,1] = fct * (self.F2 - xF3).T
+            data[:,:,2] = fct * self.FL.T
 
         with open(path, "ab") as f:
             f.write(n.tobytes())
@@ -227,6 +259,7 @@ def compute_sf():
     meta.dump(outfile)
 
     # Compute SFs
+    sfs = []
     for target in ("neutron", "proton"):
         for projectile in ("neutrino", "antineutrino"):
             for process in ("CC", "NC"):
@@ -237,6 +270,11 @@ def compute_sf():
                     sf = StructureFunctions.compute(target, projectile, process,
                                                     pdf, x, q)
                     sf.dump(outfile)
+                    if process == "CC": sfs.append(sf)
+
+    # Dump top contributions
+    for sf in sfs:
+        sf.dump(outfile, Contribution.TOP)
 
 
 if __name__ == "__main__":

@@ -75,7 +75,7 @@ int main(int nargc, char * argv[])
         /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
 
-        /* Create a new Physics environment. */
+        /* Create the physics. */
         ent_physics_create(
             &physics, "share/sf/BGR18.ent", "share/cs/BGR18.txt");
 
