@@ -8,8 +8,8 @@ import re
 from scipy.interpolate import PchipInterpolator
 
 
-def cross_section_CSMS():
-    """CSMS cross-section
+def cross_section_CMS11():
+    """CMS11 cross-section
 
        Reference:
          https://arxiv.org/abs/1106.3723
@@ -267,5 +267,5 @@ def build_table(model):
 
 
 if __name__ == "__main__":
-    build_table("CSMS")
+    build_table("CMS11")
     build_table("BGR18")

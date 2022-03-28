@@ -1,4 +1,4 @@
-# CSMS cross-section
+# CMS11 cross-section
 #
 # Generated using ENT.
 #

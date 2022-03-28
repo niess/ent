@@ -63,7 +63,7 @@ int main(int nargc, char * argv[])
 
         /* Create a new Physics environment. */
         ent_physics_create(
-            &physics, "share/sf/CSMS.ent", "share/cs/CSMS.txt");
+            &physics, "share/sf/CMS11.ent", "share/cs/CMS11.txt");
 
         /* Compute the DCS by numeric integration. */
         const double ymin = 1E-07;
