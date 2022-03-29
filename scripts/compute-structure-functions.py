@@ -73,7 +73,7 @@ class MetaData(NamedTuple):
 
 class Contribution(IntEnum):
     """Contributions to SFs"""
-    TOTAL = 0
+    OTHER = 0
     TOP = 1
 
 
@@ -128,9 +128,9 @@ class StructureFunctions(NamedTuple):
                     f2t = apfel.F2top(xj)
                     xf3t = apfel.F3top(xj)
                     flt = apfel.FLtop(xj)
-                    F2[i, j, Contribution.TOTAL] = apfel.F2total(xj) - f2t
-                    xF3[i, j, Contribution.TOTAL] = apfel.F3total(xj) - xf3t
-                    FL[i, j, Contribution.TOTAL] = apfel.FLtotal(xj) - flt
+                    F2[i, j, Contribution.OTHER] = apfel.F2total(xj) - f2t
+                    xF3[i, j, Contribution.OTHER] = apfel.F3total(xj) - xf3t
+                    FL[i, j, Contribution.OTHER] = apfel.FLtotal(xj) - flt
                     F2[i, j, Contribution.TOP] = f2t
                     xF3[i, j, Contribution.TOP] = xf3t
                     FL[i, j, Contribution.TOP] = flt
@@ -146,7 +146,7 @@ class StructureFunctions(NamedTuple):
         """Dump SFs data to a binary file"""
 
         if contrib is None:
-            c = Contribution.TOTAL # Dump total SFs by default
+            c = Contribution.OTHER # Dump other's SFs by default
         else:
             c = contrib
 

@@ -451,7 +451,7 @@ static void grid_destroy(struct grid ** grid)
 }
 
 /* Compute grid small x extrapolation. */
-static enum ent_return grid_compute_lambda(struct grid * g)
+static enum ent_return grid_compute_lambda(struct grid * g, int * freeze)
 {
         const unsigned int size_lambda =
             memory_padded_size(g->nf * g->nQ2 * sizeof(float), sizeof(double));
@@ -474,10 +474,14 @@ static enum ent_return grid_compute_lambda(struct grid * g)
                 const float * const f1 = g->f + (g->nQ2 + i) * g->nf;
                 int j;
                 for (j = 0; j < g->nf; j++) {
-                        const float f0j = f0[j];
-                        const float f1j = f1[j];
-                        if (f0j * f1j > 0.)
-                                table[j] = log(f0j / f1j) * lxi;
+                        if ((freeze != NULL) && (freeze[j])) {
+                                continue;
+                        } else {
+                                const float f0j = f0[j];
+                                const float f1j = f1[j];
+                                if (f0j * f1j > 0.)
+                                        table[j] = log(f0j / f1j) * lxi;
+                        }
                 }
         }
 
@@ -485,7 +489,8 @@ static enum ent_return grid_compute_lambda(struct grid * g)
 }
 
 /* Load a single grid in ENT format. */
-static enum ent_return grid_load(struct grid ** g_ptr, FILE * stream)
+static enum ent_return grid_load(
+    struct grid ** g_ptr, FILE * stream, int * freeze)
 {
         struct grid * g = NULL;
         enum ent_return rc;
@@ -524,7 +529,7 @@ static enum ent_return grid_load(struct grid ** g_ptr, FILE * stream)
         }
 
         /* Compute lambda exponents. */
-        if ((rc = grid_compute_lambda(g)) != ENT_RETURN_SUCCESS) {
+        if ((rc = grid_compute_lambda(g, freeze)) != ENT_RETURN_SUCCESS) {
                 goto error;
         }
 
@@ -586,12 +591,12 @@ static void grid_compute(
                 for (i = 0; i < g->nf; i++) {
                         const float y0 = lambda0[i];
                         const float y1 = lambda1[i];
-                        if ((y0 <= 0.) || (y1 <= 0.))
-                                f[i] = 0.;
-                        else {
+                        if ((y0 == 0.) || (y1 == 0.)) {
+                                f[i] = f0[i] * (1. - hQ) + f1[i] * hQ;
+                        } else {
                                 const float lambda = y0 * (1. - hQ) + y1 * hQ;
                                 f[i] = (f0[i] * (1. - hQ) + f1[i] * hQ) *
-                                    pow(x / g->x[0], -lambda);
+                                        pow(x / g->x[0], -lambda);
                         }
                 }
         } else {
@@ -690,12 +695,13 @@ static enum ent_return physics_load(
 
                         /* Compute lambda exponents. */
                         if ((rc = grid_compute_lambda(
-                            (*physics)->sf[i])) != ENT_RETURN_SUCCESS) {
+                            (*physics)->sf[i], NULL)) != ENT_RETURN_SUCCESS) {
                                 goto error;
                         }
                 } else {
-                        if ((rc = grid_load((*physics)->sf + i, stream)) !=
-                            ENT_RETURN_SUCCESS) {
+                        int freeze[3] = { 0, i >= 8, 0 };
+                        if ((rc = grid_load((*physics)->sf + i, stream,
+                            freeze)) != ENT_RETURN_SUCCESS) {
                                 goto error;
                         }
                 }
@@ -788,7 +794,7 @@ static enum ent_return lha_load_table(
         }
 
         /* Tabulate the lambda exponents for the small x extrapolation. */
-        return grid_compute_lambda(pdf);
+        return grid_compute_lambda(pdf, NULL);
 
 #undef LHAPDF_NF_MAX
 }
@@ -1063,17 +1069,25 @@ static double dcs_compute(struct ent_physics * physics, enum ent_pid projectile,
 {
         if ((process == ENT_PROCESS_DIS_CC_OTHER) || 
             (process == ENT_PROCESS_DIS_CC_TOP) ||
-            (process == ENT_PROCESS_DIS_NC))
+            (process == ENT_PROCESS_DIS_NC)) {
                 return dcs_dis(
                     physics, projectile, energy, Z, A, process, x, y);
-        else if (process == ENT_PROCESS_ELASTIC)
+        } else if (process == ENT_PROCESS_DIS_CC) {
+                const double d0 = dcs_dis(physics, projectile, energy, Z, A,
+                    ENT_PROCESS_DIS_CC_OTHER, x, y);
+                const double d1 = dcs_dis(physics, projectile, energy, Z, A,
+                    ENT_PROCESS_DIS_CC_TOP, x, y);
+                return d0 + d1;
+        } else if (process == ENT_PROCESS_ELASTIC) {
                 return dcs_elastic(projectile, energy, Z, y);
-        else if ((process == ENT_PROCESS_INVERSE_MUON) ||
-            (process == ENT_PROCESS_INVERSE_TAU))
+        } else if ((process == ENT_PROCESS_INVERSE_MUON) ||
+            (process == ENT_PROCESS_INVERSE_TAU)) {
                 return dcs_inverse(projectile, energy, Z, process, y);
-        else if (process == ENT_PROCESS_GLASHOW_HADRON)
+        } else if (process == ENT_PROCESS_GLASHOW_HADRON) {
                 return dcs_glashow(projectile, energy, Z, y);
-        return -DBL_MAX;
+        } else {
+                return -DBL_MAX;
+        }
 }
 
 /* Compute the total cross-section for a processes using a Gaussian
@@ -1298,7 +1312,8 @@ static void physics_tabulate_dis(struct ent_physics * physics)
                                 const double r =
                                     (process == ENT_PROCESS_DIS_CC_OTHER) ?
                                         rW : rZ;
-                                const double factor = r * (sf[0] + sf[1]);
+                                const double factor =
+                                    r * (fabs(sf[0]) + fabs(sf[1]));
 
                                 pdf[k * DIS_X_N * DIS_Q2_N] = (factor > 0.) ?
                                     c * factor * Q2 : 0.;
@@ -1314,7 +1329,8 @@ static void physics_tabulate_dis(struct ent_physics * physics)
 
                                 dis_compute_sf(physics, projectile, Z, A,
                                     process, x, Q2, sf);
-                                const double factor = rW * (sf[0] + sf[1]);
+                                const double factor =
+                                    rW * (fabs(sf[0]) + fabs(sf[1]));
 
                                 pdf[k * DIS_X_N * DIS_Q2_N] = (factor > 0.) ?
                                     c * factor * Q2 : 0.;
@@ -1496,7 +1512,9 @@ static enum ent_return proget_compute(enum ent_pid projectile,
         if ((apid != ENT_PID_NU_E) && (apid != ENT_PID_NU_MU) &&
             (apid != ENT_PID_NU_TAU))
                 return ENT_RETURN_DOMAIN_ERROR;
-        if (process == ENT_PROCESS_DIS_CC_OTHER) {
+        if (process == ENT_PROCESS_DIS_CC) {
+                return ENT_RETURN_DOMAIN_ERROR;
+        } else if (process == ENT_PROCESS_DIS_CC_OTHER) {
                 if (target == ENT_PID_NEUTRON)
                         *proget = (projectile > 0) ?
                             PROGET_CC_OTHER_NU_NEUTRON :
@@ -2229,7 +2247,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                 dis_compute_sf(physics, projectile, Z, A, process, x, Q2, sf);
 
                 /* Then, reject sample accordingly. */
-                const double factor0 = sf[0] + sf[1];
+                const double factor0 = fabs(sf[0]) + fabs(sf[1]);
                 const double y1 = 1. - y;
                 const double factor1 = sf[0] + y1 * y1 * sf[1] - y * y * sf[2];
 
@@ -2993,6 +3011,50 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
+/* Tranport cross-sections for DIS CC only. */
+static enum ent_return transport_cross_section_cc(struct ent_physics * physics,
+    enum ent_pid projectile, double energy, double Z, double A, double * cs)
+{
+        /* Build the interpolation or extrapolation factors. */
+        double *cs0, *cs1;
+        double p1, p2;
+        int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
+
+        /* Build the table of cumulative cross-section values. */
+        double Z0, Z1;
+        if (projectile > 0) {
+                Z0 = Z;
+                Z1 = 0.;
+        } else {
+                Z0 = 0.;
+                Z1 = Z;
+        }
+        cs[0] = 0;
+        cs[1] = cs[0];
+        cs[2] = cs[1];
+        cs[3] = cs[2];
+        cs[4] = cs[3] + ((Z0 > 0.) ?
+            Z0 * cross_section_compute(mode, 4, cs0, cs1, p1, p2) : 0.);
+        cs[5] = cs[4] + ((Z0 > 0.) ?
+            Z0 * cross_section_compute(mode, 5, cs0, cs1, p1, p2) : 0.);
+        cs[6] = cs[5] + ((Z1 > 0.) ?
+            Z1 * cross_section_compute(mode, 6, cs0, cs1, p1, p2) : 0.);
+        cs[7] = cs[6] + ((Z1 > 0.) ?
+            Z1 * cross_section_compute(mode, 7, cs0, cs1, p1, p2) : 0.);
+        cs[8] = cs[7] + ((Z0 > 0.) ?
+            Z0 * cross_section_compute(mode, 8, cs0, cs1, p1, p2) : 0.);
+        cs[9] = cs[8] + ((Z1 > 0.) ?
+            Z1 * cross_section_compute(mode, 9, cs0, cs1, p1, p2) : 0.);
+        cs[10] = cs[9] + ((Z0 > 0.) ?
+            Z0 * cross_section_compute(mode, 10, cs0, cs1, p1, p2) : 0.);
+        cs[11] = cs[10] + ((Z1 > 0.) ?
+            Z1 * cross_section_compute(mode, 11, cs0, cs1, p1, p2) : 0.);
+
+        /* Check the result and return. */
+        if (cs[PROGET_N_DIS - 1] <= 0.) return ENT_RETURN_DOMAIN_ERROR;
+        return ENT_RETURN_SUCCESS;
+}
+
 /* Generic builder for the ancestor likeliness. */
 static void ancestor_likeliness_fill(struct ent_context * context,
     struct ent_state * daughter, double Z, int * np, int * proget_v, double * p,
@@ -3357,6 +3419,11 @@ static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
             ENT_RETURN_SUCCESS)
                 return rc;
 
+        if (cs_p + cs_n <= 0.) { /* Fallback in case of null cross-section. */
+                cs_p = medium-> Z / medium->A;
+                cs_n = 1. - cs_p;
+        }
+
         /* Randomise the target accordingly. */
         *proget = (context->random(context) < cs_p / (cs_p + cs_n)) ? proget_p :
                                                                       proget_n;
@@ -3395,6 +3462,25 @@ static enum ent_return vertex_forward(struct ent_physics * physics,
                 const double r = cs[PROGET_N - 1] * context->random(context);
                 if (r < 0.) return ENT_RETURN_DOMAIN_ERROR;
                 for (proget = 0; proget < PROGET_N; proget++)
+                        if (r <= cs[proget]) break;
+        } else if (process == ENT_PROCESS_DIS_CC) {
+                /* Randomise the CC process and the target if not specified.
+                 * First let's compute the CC cross-sections.
+                 */
+                enum ent_return rc;
+                double cs[PROGET_N_DIS];
+                if ((rc = transport_cross_section_cc(physics, state->pid,
+                         state->energy, medium->Z, medium->A, cs)) !=
+                    ENT_RETURN_SUCCESS)
+                        return rc;
+
+                /* Then, let us randomise the interaction process and its
+                 * corresponding target.
+                 */
+                const double r = cs[PROGET_N_DIS - 1] *
+                    context->random(context);
+                if (r < 0.) return ENT_RETURN_DOMAIN_ERROR;
+                for (proget = 0; proget < PROGET_N_DIS; proget++)
                         if (r <= cs[proget]) break;
         } else if ((process == ENT_PROCESS_DIS_CC_OTHER) ||
             (process == ENT_PROCESS_DIS_CC_TOP) ||
@@ -3438,6 +3524,9 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                          medium, density, &ancestor, &proget)) !=
                     ENT_RETURN_SUCCESS)
                         return rc;
+        } else if (process == ENT_PROCESS_DIS_CC) {
+                /* XXX Implement this case*/
+                proget = PROGET_CC_TOP_NU_NEUTRON;
         } else if ((process == ENT_PROCESS_DIS_CC_OTHER) ||
             (process == ENT_PROCESS_DIS_CC_TOP) ||
             (process == ENT_PROCESS_DIS_NC)) {
