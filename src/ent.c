@@ -1209,6 +1209,10 @@ static void physics_tabulate_cs(struct ent_physics * physics, int compute_dis)
                 ENT_PID_NU_BAR_MU, ENT_PID_NU_TAU, ENT_PID_NU_BAR_TAU,
                 ENT_PID_NU_MU, ENT_PID_NU_TAU, ENT_PID_NU_BAR_E,
                 ENT_PID_NU_BAR_E };
+        const double Z[PROGET_N - 1] = {
+                0., 0., 0., 0., 1., 1., 1., 1., 0., 0., 1., 1.,
+                1., 1., 1., 1., 1., 1., 1., 1., 1., 1.
+        };
 
         const double dlE = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
         double * table;
@@ -1224,10 +1228,8 @@ static void physics_tabulate_cs(struct ent_physics * physics, int compute_dis)
                             (j == PROGET_NC_NU_BAR_PROTON))) {
                                 table[j] = 0.;
                         } else {
-                                const double Z =
-                                    (j <= PROGET_NC_NU_BAR_NEUTRON) ? 0. : 1.;
                                 table[j] = dcs_integrate(physics, projectile[j],
-                                    energy, Z, 1., process[j]);
+                                    energy, Z[j], 1., process[j]);
                         }
                 }
         }
@@ -2290,14 +2292,16 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
         *Q2 = 2. * ENT_MASS_NUCLEON * (*E) * x * y;
 
         /* Compute the true PDF. First let's get the DCS. */
-        const double Z = (proget / 4);
         const double A = 1.;
+        double Z;
         enum ent_process process;
         if (proget < 8) {
-            process = (proget % 2) ?
-                ENT_PROCESS_DIS_NC : ENT_PROCESS_DIS_CC_OTHER;
+                Z = (proget / 4);
+                process = (proget % 2) ?
+                    ENT_PROCESS_DIS_NC : ENT_PROCESS_DIS_CC_OTHER;
         } else {
-            process = ENT_PROCESS_DIS_CC_TOP;
+                Z = (proget - 8) / 2;
+                process = ENT_PROCESS_DIS_CC_TOP;
         }
         int pid;
         if (process == ENT_PROCESS_DIS_NC)
@@ -2945,10 +2949,10 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
             Z1 * cross_section_compute(mode, 6, cs0, cs1, p1, p2) : 0.);
         cs[7] = cs[6] + ((Z1 > 0.) ?
             Z1 * cross_section_compute(mode, 7, cs0, cs1, p1, p2) : 0.);
-        cs[8] = cs[7] + ((Z0 > 0.) ?
-            Z0 * cross_section_compute(mode, 8, cs0, cs1, p1, p2) : 0.);
-        cs[9] = cs[8] + ((Z1 > 0.) ?
-            Z1 * cross_section_compute(mode, 9, cs0, cs1, p1, p2) : 0.);
+        cs[8] = cs[7] + ((N0 > 0.) ?
+            N0 * cross_section_compute(mode, 8, cs0, cs1, p1, p2) : 0.);
+        cs[9] = cs[8] + ((N1 > 0.) ?
+            N1 * cross_section_compute(mode, 9, cs0, cs1, p1, p2) : 0.);
         cs[10] = cs[9] + ((Z0 > 0.) ?
             Z0 * cross_section_compute(mode, 10, cs0, cs1, p1, p2) : 0.);
         cs[11] = cs[10] + ((Z1 > 0.) ?
@@ -3021,30 +3025,34 @@ static enum ent_return transport_cross_section_cc(struct ent_physics * physics,
         int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
 
         /* Build the table of cumulative cross-section values. */
-        double Z0, Z1;
+        double N0, N1, Z0, Z1;
         if (projectile > 0) {
                 Z0 = Z;
                 Z1 = 0.;
+                N0 = A - Z;
+                N1 = 0.;
         } else {
                 Z0 = 0.;
                 Z1 = Z;
+                N0 = 0.;
+                N1 = A - Z;
         }
-        cs[0] = 0;
+        cs[0] = ((N0 > 0.) ?
+            N0 * cross_section_compute(mode, 0, cs0, cs1, p1, p2) : 0.);
         cs[1] = cs[0];
-        cs[2] = cs[1];
+        cs[2] = cs[1] + ((N1 > 0.) ?
+            N1 * cross_section_compute(mode, 2, cs0, cs1, p1, p2) : 0.);
         cs[3] = cs[2];
         cs[4] = cs[3] + ((Z0 > 0.) ?
             Z0 * cross_section_compute(mode, 4, cs0, cs1, p1, p2) : 0.);
-        cs[5] = cs[4] + ((Z0 > 0.) ?
-            Z0 * cross_section_compute(mode, 5, cs0, cs1, p1, p2) : 0.);
+        cs[5] = cs[4];
         cs[6] = cs[5] + ((Z1 > 0.) ?
             Z1 * cross_section_compute(mode, 6, cs0, cs1, p1, p2) : 0.);
-        cs[7] = cs[6] + ((Z1 > 0.) ?
-            Z1 * cross_section_compute(mode, 7, cs0, cs1, p1, p2) : 0.);
-        cs[8] = cs[7] + ((Z0 > 0.) ?
-            Z0 * cross_section_compute(mode, 8, cs0, cs1, p1, p2) : 0.);
-        cs[9] = cs[8] + ((Z1 > 0.) ?
-            Z1 * cross_section_compute(mode, 9, cs0, cs1, p1, p2) : 0.);
+        cs[7] = cs[6];
+        cs[8] = cs[7] + ((N0 > 0.) ?
+            N0 * cross_section_compute(mode, 8, cs0, cs1, p1, p2) : 0.);
+        cs[9] = cs[8] + ((N1 > 0.) ?
+            N1 * cross_section_compute(mode, 9, cs0, cs1, p1, p2) : 0.);
         cs[10] = cs[9] + ((Z0 > 0.) ?
             Z0 * cross_section_compute(mode, 10, cs0, cs1, p1, p2) : 0.);
         cs[11] = cs[10] + ((Z1 > 0.) ?
