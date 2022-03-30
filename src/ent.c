@@ -2202,7 +2202,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                         dx = 0.;
                 else
                         dx = sqrt(dx);
-                const double hx = (dx - bx) / ax;
+                const double hx = (ax != 0.) ? (dx - bx) / ax : 0.;
                 x = physics->dis_xmin * exp((ix + hx) * physics->dis_dlx);
                 if (x <= 0.) continue;
 
@@ -2217,7 +2217,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                         dy = 0.;
                 else
                         dy = sqrt(dy);
-                const double hy = (dy - by) / ay;
+                const double hy = (ay != 0.) ? (dy - by) / ay : 0.;
                 Q2 = physics->dis_Q2min * exp((iQ2 + hy) * physics->dis_dlQ2);
                 if (Q2 >= Q2max) continue;
 
