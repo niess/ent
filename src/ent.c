@@ -143,8 +143,12 @@ struct ent_physics {
         struct grid * pdf;
         /* Index to the DIS SFs data. */
         struct grid * sf[PROGET_N_DIS];
-        /* Entry point for the total cross-sections. */
-        double * cs;
+        /* Entry point for kinematic cross-sections, computed from DCSs. */
+        double * cs_k;
+        /* Entry point for transport cross-sections, which the user might
+         * override.
+         */
+        double * cs_t;
         /* Entry point for the bias probability density function for DIS. */
         double * dis_pdf;
         /* Entry point for the bias cumulative density function for DIS. */
@@ -175,14 +179,15 @@ static void * physics_create(void)
 {
         const int np = PROGET_N - 1;
         void * v = malloc(sizeof(struct ent_physics) +
-            (np * ENERGY_N + PROGET_N_DIS * DIS_Q2_N * DIS_X_N +
+            (2 * np * ENERGY_N + PROGET_N_DIS * DIS_Q2_N * DIS_X_N +
              PROGET_N_DIS * (DIS_Q2_N - 1) * (DIS_X_N - 1)) * sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
         p->pdf = NULL;
         memset(p->sf, 0x0, sizeof(p->sf));
-        p->cs = (double *)(p->data);
-        p->dis_pdf = p->cs + np * ENERGY_N;
+        p->cs_k = (double *)(p->data);
+        p->cs_t = p->cs_k + np * ENERGY_N;
+        p->dis_pdf = p->cs_t + np * ENERGY_N;
         p->dis_cdf = p->dis_pdf + PROGET_N_DIS * DIS_Q2_N * DIS_X_N;
         return v;
 }
@@ -1218,19 +1223,12 @@ static void physics_tabulate_cs(struct ent_physics * physics, int compute_dis)
         double * table;
         const int np = PROGET_N - 1;
         int i;
-        for (i = 0, table = physics->cs; i < ENERGY_N; i++, table += np) {
+        for (i = 0, table = physics->cs_k; i < ENERGY_N; i++, table += np) {
                 const double energy = ENERGY_MIN * exp(i * dlE);
                 int j;
                 for (j = 0; j < np; j++) {
-                        if ((!compute_dis) && ((j == PROGET_NC_NU_NEUTRON) ||
-                            (j == PROGET_NC_NU_BAR_NEUTRON) ||
-                            (j == PROGET_NC_NU_PROTON) ||
-                            (j == PROGET_NC_NU_BAR_PROTON))) {
-                                table[j] = 0.;
-                        } else {
-                                table[j] = dcs_integrate(physics, projectile[j],
-                                    energy, Z[j], 1., process[j]);
-                        }
+                        table[j] = dcs_integrate(physics, projectile[j],
+                            energy, Z[j], 1., process[j]);
                 }
         }
 }
@@ -1367,14 +1365,15 @@ static void physics_tabulate_dis(struct ent_physics * physics)
         }
 }
 
-/* Load DIS cross-sections from a text file. */
+/* Load cross-sections from a text file. */
 static enum ent_return cs_load(FILE * stream, struct ent_physics * physics)
 {
 #define BUFFER_SIZE 2048
 
         char buffer[BUFFER_SIZE];
         int i = 0;
-        double * table = physics->cs;
+        double * table = physics->cs_t;
+        double * cs_k = physics->cs_k;
         const double re = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
         while (!feof(stream)) {
                 if (fgets(buffer, BUFFER_SIZE - 1, stream) == NULL)
@@ -1393,38 +1392,52 @@ static enum ent_return cs_load(FILE * stream, struct ent_physics * physics)
                         return ENT_RETURN_FORMAT_ERROR;
 
                 const double r2 = data[2] /
-                    (table[PROGET_CC_OTHER_NU_NEUTRON] +
-                     table[PROGET_CC_TOP_NU_NEUTRON]);
-                table[PROGET_CC_OTHER_NU_NEUTRON] *= r2;
-                table[PROGET_CC_TOP_NU_NEUTRON] *= r2;
+                    (cs_k[PROGET_CC_OTHER_NU_NEUTRON] +
+                     cs_k[PROGET_CC_TOP_NU_NEUTRON]);
+                table[PROGET_CC_OTHER_NU_NEUTRON] =
+                    cs_k[PROGET_CC_OTHER_NU_NEUTRON] * r2;
+                table[PROGET_CC_TOP_NU_NEUTRON] =
+                    cs_k[PROGET_CC_TOP_NU_NEUTRON] * r2;
 
                 table[PROGET_NC_NU_NEUTRON] = data[4];
 
                 const double r6 = data[6] /
-                    (table[PROGET_CC_OTHER_NU_BAR_NEUTRON] +
-                     table[PROGET_CC_TOP_NU_BAR_NEUTRON]);
-                table[PROGET_CC_OTHER_NU_BAR_NEUTRON] *= r6;
-                table[PROGET_CC_TOP_NU_BAR_NEUTRON] *= r6;
+                    (cs_k[PROGET_CC_OTHER_NU_BAR_NEUTRON] +
+                     cs_k[PROGET_CC_TOP_NU_BAR_NEUTRON]);
+                table[PROGET_CC_OTHER_NU_BAR_NEUTRON] =
+                    cs_k[PROGET_CC_OTHER_NU_BAR_NEUTRON] * r6;
+                table[PROGET_CC_TOP_NU_BAR_NEUTRON] =
+                    cs_k[PROGET_CC_TOP_NU_BAR_NEUTRON] * r6;
 
                 table[PROGET_NC_NU_BAR_NEUTRON] = data[8];
 
                 const double r1 = data[1] /
-                    (table[PROGET_CC_OTHER_NU_PROTON] +
-                     table[PROGET_CC_TOP_NU_PROTON]);
-                table[PROGET_CC_OTHER_NU_PROTON] *= r1;
-                table[PROGET_CC_TOP_NU_PROTON] *= r1;
+                    (cs_k[PROGET_CC_OTHER_NU_PROTON] +
+                     cs_k[PROGET_CC_TOP_NU_PROTON]);
+                table[PROGET_CC_OTHER_NU_PROTON] =
+                    cs_k[PROGET_CC_OTHER_NU_PROTON] * r1;
+                table[PROGET_CC_TOP_NU_PROTON] =
+                    cs_k[PROGET_CC_TOP_NU_PROTON] * r1;
 
                 table[PROGET_NC_NU_PROTON] = data[3];
 
                 const double r5 = data[5] /
-                    (table[PROGET_CC_OTHER_NU_BAR_PROTON] +
-                     table[PROGET_CC_TOP_NU_BAR_PROTON]);
-                table[PROGET_CC_OTHER_NU_BAR_NEUTRON] *= r5;
-                table[PROGET_CC_TOP_NU_BAR_NEUTRON] *= r5;
+                    (cs_k[PROGET_CC_OTHER_NU_BAR_PROTON] +
+                     cs_k[PROGET_CC_TOP_NU_BAR_PROTON]);
+                table[PROGET_CC_OTHER_NU_BAR_PROTON] =
+                    cs_k[PROGET_CC_OTHER_NU_BAR_PROTON] * r5;
+                table[PROGET_CC_TOP_NU_BAR_PROTON] =
+                    cs_k[PROGET_CC_TOP_NU_BAR_PROTON] * r5;
 
                 table[PROGET_NC_NU_BAR_PROTON] = data[7];
 
+                /* Use kinematic cross-sections for other processes. */
+                int j;
+                for (j = PROGET_N_DIS; j < PROGET_N - 1; j++)
+                        table[j] = cs_k[j];
+
                 table += PROGET_N - 1;
+                cs_k += PROGET_N - 1;
                 i++;
                 if (i == ENERGY_N) break;
         }
@@ -1469,7 +1482,7 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
         physics_tabulate_cs(*physics, cs_file == NULL);
 
         if (cs_file != NULL) {
-                /* Load any cross-section table. */
+                /* Use provided cross-sections for the transport. */
                 rc = ENT_RETURN_PATH_ERROR;
                 if ((stream = fopen(cs_file, "r")) == NULL) goto exit;
 
@@ -1477,6 +1490,10 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
                     goto exit;
                 fclose(stream);
                 stream = NULL;
+        } else {
+                /* Use computed cross-sections for the transport. */
+                memcpy((*physics)->cs_t, (*physics)->cs_k,
+                    ENERGY_N * (PROGET_N - 1) * sizeof(*(*physics)->cs_t));
         }
 exit:
         if (stream != NULL) fclose(stream);
@@ -1588,22 +1605,22 @@ static enum ent_return proget_compute(enum ent_pid projectile,
 }
 
 /* Build the interpolation or extrapolation factors. */
-static int cross_section_prepare(struct ent_physics * physics, double energy,
-    double ** cs0, double ** cs1, double * p1, double * p2)
+static int cross_section_prepare(double * cs, double energy, double ** cs0,
+    double ** cs1, double * p1, double * p2)
 {
         int mode;
         if (energy < ENERGY_MIN) {
                 /* Log extrapolation model below Emin. */
                 mode = 1;
-                *cs0 = physics->cs;
-                *cs1 = physics->cs + PROGET_N - 1;
+                *cs0 = cs;
+                *cs1 = cs + PROGET_N - 1;
                 *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
                 *p2 = energy / ENERGY_MIN;
         } else if (energy >= ENERGY_MAX) {
                 /* Log extrapolation model above Emax. */
                 mode = 2;
-                *cs0 = physics->cs + (ENERGY_N - 2) * (PROGET_N - 1);
-                *cs1 = physics->cs + (ENERGY_N - 1) * (PROGET_N - 1);
+                *cs0 = cs + (ENERGY_N - 2) * (PROGET_N - 1);
+                *cs1 = cs + (ENERGY_N - 1) * (PROGET_N - 1);
                 *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
                 *p2 = energy / ENERGY_MAX;
         } else {
@@ -1614,8 +1631,8 @@ static int cross_section_prepare(struct ent_physics * physics, double energy,
                 *p1 = log(energy / ENERGY_MIN) / dle;
                 const int i0 = (int)(*p1);
                 *p1 -= i0;
-                *cs0 = physics->cs + i0 * (PROGET_N - 1);
-                *cs1 = physics->cs + (i0 + 1) * (PROGET_N - 1);
+                *cs0 = cs + i0 * (PROGET_N - 1);
+                *cs1 = cs + (i0 + 1) * (PROGET_N - 1);
                 *p2 = 0.;
         }
         return mode;
@@ -1672,7 +1689,8 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
          */
         double *cs0, *cs1;
         double p1, p2;
-        int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
+        int mode = cross_section_prepare(
+            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
 
         /* Compute the relevant process-target indices. */
         if ((process == ENT_PROCESS_DIS_CC) ||
@@ -1780,6 +1798,7 @@ enum ent_return ent_physics_dcs(struct ent_physics * physics,
             dcs_compute(physics, projectile, energy, Z, A, process, x, y);
         if (d == -DBL_MAX) ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
         *dcs = d;
+
         return ENT_RETURN_SUCCESS;
 }
 
@@ -2307,13 +2326,14 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
         if (process == ENT_PROCESS_DIS_NC)
                 pid = state->pid;
         else
-                pid = (state->pid > 0) ? state->pid - 1 : 1 - state->pid;
+                pid = (state->pid > 0) ? state->pid + 1 : state->pid - 1;
         const double dcs1 = dcs_dis(physics, pid, *E, Z, A, process, x, y);
 
         /* Then, let us compute the total cross-section. */
         double *csl, *csh;
         double pl, ph;
-        int mode = cross_section_prepare(physics, *E, &csl, &csh, &pl, &ph);
+        int mode = cross_section_prepare(
+            physics->cs_k, *E, &csl, &csh, &pl, &ph);
         const double cs1 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
         const double pdf1 = dcs1 / cs1;
@@ -2536,8 +2556,8 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
             dcs_compute(physics, *pid0, state->energy, 1., 1., process, 0., y);
         double *csl, *csh;
         double pl, ph;
-        int mode =
-            cross_section_prepare(physics, state->energy, &csl, &csh, &pl, &ph);
+        int mode = cross_section_prepare(
+            physics->cs_k, state->energy, &csl, &csh, &pl, &ph);
         const double cs0 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
         const double pdf0 = dcs0 / cs0;
@@ -2545,7 +2565,7 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
         /* Compute the true PDF at E=E_i. */
         const double dcs1 =
             dcs_compute(physics, *pid0, *E0, 1., 1., process, 0., y);
-        mode = cross_section_prepare(physics, *E0, &csl, &csh, &pl, &ph);
+        mode = cross_section_prepare(physics->cs_k, *E0, &csl, &csh, &pl, &ph);
         const double cs1 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
         const double pdf1 = dcs1 / cs1;
@@ -2785,7 +2805,7 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                  */
                 return ENT_RETURN_SUCCESS;
         }
-        if (proget <= PROGET_NC_NU_BAR_PROTON) {
+        if (proget < PROGET_N_DIS) {
                 /* Sample the energy loss. */
                 enum ent_return rc;
                 double Enu, Q2;
@@ -2802,7 +2822,7 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                 if (product != NULL) memcpy(product, state, sizeof(*product));
 
                 /* Update the MC state. */
-                if ((proget % 2) == 0) {
+                if ((proget >= 8) || ((proget % 2) == 0)) {
                         /* Charged current event. */
                         state->pid += (state->pid > 0) ? 1 : -1;
                         const double Emu = state->energy;
@@ -2918,7 +2938,8 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         /* Build the interpolation or extrapolation factors. */
         double *cs0, *cs1;
         double p1, p2;
-        int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
+        const int mode = cross_section_prepare(
+            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
 
         /* Build the table of cumulative cross-section values. */
         double N0, N1, Z0, Z1;
@@ -3022,7 +3043,8 @@ static enum ent_return transport_cross_section_cc(struct ent_physics * physics,
         /* Build the interpolation or extrapolation factors. */
         double *cs0, *cs1;
         double p1, p2;
-        int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
+        const int mode = cross_section_prepare(
+            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
 
         /* Build the table of cumulative cross-section values. */
         double N0, N1, Z0, Z1;
@@ -3185,8 +3207,8 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
          */
         double *cs0, *cs1;
         double p1, p2;
-        int mode = cross_section_prepare(
-            physics, daughter->energy, &cs0, &cs1, &p1, &p2);
+        const int mode = cross_section_prepare(
+            physics->cs_t, daughter->energy, &cs0, &cs1, &p1, &p2);
 
         /* Check the valid backward processes and compute their a priori
          * probabilities of occurence.
@@ -3388,7 +3410,8 @@ static enum ent_return vertex_dis_compute(struct ent_physics * physics,
          */
         double *cs0, *cs1;
         double p1, p2;
-        int mode = cross_section_prepare(physics, energy, &cs0, &cs1, &p1, &p2);
+        int mode = cross_section_prepare(
+            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
 
         /* Compute the relevant cross-sections and randomise the
          * target accordingly.
@@ -3400,6 +3423,11 @@ static enum ent_return vertex_dis_compute(struct ent_physics * physics,
         *cs_n = (N > 0.) ?
             N * cross_section_compute(mode, proget_n, cs0, cs1, p1, p2) :
             0.;
+
+        if (*cs_p + *cs_n <= 0.) { /* Fallback in case of null cross-section. */
+                *cs_p = medium-> Z / medium->A;
+                *cs_n = 1. - *cs_p;
+        }
 
         return ENT_RETURN_SUCCESS;
 }
@@ -3426,11 +3454,6 @@ static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
                  process, &proget_p, &proget_n, &cs_p, &cs_n)) !=
             ENT_RETURN_SUCCESS)
                 return rc;
-
-        if (cs_p + cs_n <= 0.) { /* Fallback in case of null cross-section. */
-                cs_p = medium-> Z / medium->A;
-                cs_n = 1. - cs_p;
-        }
 
         /* Randomise the target accordingly. */
         *proget = (context->random(context) < cs_p / (cs_p + cs_n)) ? proget_p :
@@ -3533,8 +3556,31 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                     ENT_RETURN_SUCCESS)
                         return rc;
         } else if (process == ENT_PROCESS_DIS_CC) {
-                /* XXX Implement this case*/
-                proget = PROGET_CC_TOP_NU_NEUTRON;
+                /* Randomise the CC process and the target using the
+                 * daughter's energy. First let's compute the CC cross-sections.
+                 */
+                enum ent_return rc;
+                enum ent_pid pid = (state->pid > 0) ?
+                    state->pid + 1 : state->pid - 1;
+                double cs[PROGET_N_DIS];
+                if ((rc = transport_cross_section_cc(physics, pid,
+                         state->energy, medium->Z, medium->A, cs)) !=
+                    ENT_RETURN_SUCCESS)
+                        return rc;
+
+                /* Then, let us randomise the interaction process and its
+                 * corresponding target.
+                 */
+                const double r = cs[PROGET_N_DIS - 1] *
+                    context->random(context);
+                if (r < 0.) return ENT_RETURN_DOMAIN_ERROR;
+                for (proget = 0; proget < PROGET_N_DIS; proget++)
+                        if (r <= cs[proget]) break;
+
+                /* Finally, correct the Monte Carlo weight accordingly. */
+                const double d = (proget > 0) ?
+                    cs[proget] - cs[proget - 1] : cs[0];
+                state->weight *= cs[PROGET_N_DIS - 1] / d;
         } else if ((process == ENT_PROCESS_DIS_CC_OTHER) ||
             (process == ENT_PROCESS_DIS_CC_TOP) ||
             (process == ENT_PROCESS_DIS_NC)) {
@@ -3563,7 +3609,7 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                         double *cs0, *cs1;
                         double p1, p2;
                         int mode = cross_section_prepare(
-                            physics, state->energy, &cs0, &cs1, &p1, &p2);
+                            physics->cs_t, state->energy, &cs0, &cs1, &p1, &p2);
 
                         int proget_v[6] = { -1, -1, -1, -1, -1, -1 };
                         int ancestor_v[6] = { -1, -1, -1, -1, -1, -1 };
@@ -3589,7 +3635,7 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                         double *cs0, *cs1;
                         double p1, p2;
                         int mode = cross_section_prepare(
-                            physics, state->energy, &cs0, &cs1, &p1, &p2);
+                            physics->cs_t, state->energy, &cs0, &cs1, &p1, &p2);
 
                         int proget_v[2] = { -1, -1 };
                         int ancestor_v[2] = { -1, -1 };
@@ -3615,7 +3661,7 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                         double *cs0, *cs1;
                         double p1, p2;
                         int mode = cross_section_prepare(
-                            physics, state->energy, &cs0, &cs1, &p1, &p2);
+                            physics->cs_t, state->energy, &cs0, &cs1, &p1, &p2);
 
                         int proget_v[2] = { -1, -1 };
                         int ancestor_v[2] = { -1, -1 };
@@ -3653,6 +3699,21 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                         return rc;
                 const double cs = (proget == proget_p) ? cs_p : cs_n;
                 state->weight *= cs / (cs_p + cs_n);
+        } else if (process == ENT_PROCESS_DIS_CC) {
+                /* Correct for the biasing in the CC process and target
+                 * randomisation. First let's compute the CC cross-sections.
+                 */
+                enum ent_return rc;
+                double cs[PROGET_N_DIS];
+                if ((rc = transport_cross_section_cc(physics, state->pid,
+                         state->energy, medium->Z, medium->A, cs)) !=
+                    ENT_RETURN_SUCCESS)
+                        return rc;
+
+                /* Then, let us correct the Monte Carlo weight. */
+                const double d = (proget > 0) ?
+                    cs[proget] - cs[proget - 1] : cs[0];
+                state->weight *= d / cs[PROGET_N_DIS - 1];
         }
 
         /* Apply any biasing weight for the ancestor and for the process
