@@ -1885,7 +1885,25 @@ enum ent_return ent_physics_dsf(struct ent_physics * physics,
         /* Compute the SFs and return. */
         const double A = 1.;
         double sf[3];
-        dis_compute_sf(physics, projectile, Z, A, process, x, Q2, sf);
+        if ((process == ENT_PROCESS_DIS_NC) ||
+            (process == ENT_PROCESS_DIS_CC_OTHER) ||
+            (process == ENT_PROCESS_DIS_CC_OTHER)) {
+                dis_compute_sf(physics, projectile, Z, A, process, x, Q2, sf);
+        } else if (process == ENT_PROCESS_DIS_CC) {
+                double tmp[3];
+                int i;
+
+                dis_compute_sf(physics, projectile, Z, A,
+                    ENT_PROCESS_DIS_CC_OTHER, x, Q2, sf);
+                dis_compute_sf(physics, projectile, Z, A,
+                    ENT_PROCESS_DIS_CC_OTHER, x, Q2, tmp);
+
+                for (i = 0; i < 3; i++) {
+                        sf[i] += tmp[i];
+                }
+        } else {
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
 
         if (F2 != NULL) *F2 = sf[0] + sf[1];
         if (F3 != NULL) *F3 = (sf[0] - sf[1]) / x;
@@ -2285,16 +2303,22 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state, int proget,
     double * E, double * Q2)
 {
-        /* Sample y using a bias PDF. */
+        /* Sample y using a bias PDF as 1 / y^alpha over [y0, 1], where
+         * y0 is determined from the PDF Q2 min tabulated value.
+         */
         const double alpha = 0.5;
         double ry, y;
+        const double y0p =
+            physics->dis_Q2min / (2 * ENT_MASS_NUCLEON * state->energy);
+        const double y0 = y0p / (1. + y0p);
+        const double y0e = pow(y0, 1. - alpha);
         for (;;) {
                 ry = context->random(context);
-                y = pow(ry, 1. / (1. - alpha));
+                y = pow(y0e + ry * (1 - y0e), 1. / (1. - alpha));
                 if ((y > 0.) && (y < 1.)) break;
         }
         *E = state->energy / (1. - y);
-        double pdf0 = (1. - alpha) * ry / y;
+        double pdf0 = (1. - alpha) * (y0e + ry * (1 - y0e)) / y;
 
         /* Sample x assuming an asymptotic small x PDF. */
         const double beta = 2.5;
