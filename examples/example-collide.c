@@ -105,7 +105,7 @@ int main(int nargc, char * argv[])
                 struct ent_state neutrino = { projectile, energy, 0., 0., 1.,
                         { 0., 0., 0. }, { 0., 0., 1. } };
                 struct ent_state product;
-                ent_vertex(
+                ent_collide(
                     physics, &context, &neutrino, &medium, process, &product);
                 fprintf(stream, "%12.5lE\n", product.energy / energy);
         }

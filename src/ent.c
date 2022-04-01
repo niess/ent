@@ -216,13 +216,15 @@ const char * ent_error_function(ent_function_t * caller)
         REGISTER_FUNCTION(ent_physics_create);
         REGISTER_FUNCTION(ent_physics_cross_section);
         REGISTER_FUNCTION(ent_physics_dcs);
+        REGISTER_FUNCTION(ent_physics_sf);
         REGISTER_FUNCTION(ent_physics_pdf);
-        REGISTER_FUNCTION(ent_vertex);
+        REGISTER_FUNCTION(ent_collide);
         REGISTER_FUNCTION(ent_transport);
 
         /* Other API functions. */
         REGISTER_FUNCTION(ent_physics_destroy);
         REGISTER_FUNCTION(ent_error_string);
+        REGISTER_FUNCTION(ent_error_print);
         REGISTER_FUNCTION(ent_error_function);
         REGISTER_FUNCTION(ent_error_handler_get);
         REGISTER_FUNCTION(ent_error_handler_set);
@@ -1858,11 +1860,11 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
 }
 
 /* API interface to DIS SFs. */
-enum ent_return ent_physics_dsf(struct ent_physics * physics,
+enum ent_return ent_physics_sf(struct ent_physics * physics,
     enum ent_pid projectile, enum ent_pid target, enum ent_process process,
     double x, double Q2, double * F2, double * F3, double * FL)
 {
-        ENT_ACKNOWLEDGE(ent_physics_dsf);
+        ENT_ACKNOWLEDGE(ent_physics_sf);
 
         /* Check the inputs. */
         if ((x > 1.) || (x <= 0.) || (Q2 < 0.))
@@ -1887,7 +1889,7 @@ enum ent_return ent_physics_dsf(struct ent_physics * physics,
         double sf[3];
         if ((process == ENT_PROCESS_DIS_NC) ||
             (process == ENT_PROCESS_DIS_CC_OTHER) ||
-            (process == ENT_PROCESS_DIS_CC_OTHER)) {
+            (process == ENT_PROCESS_DIS_CC_TOP)) {
                 dis_compute_sf(physics, projectile, Z, A, process, x, Q2, sf);
         } else if (process == ENT_PROCESS_DIS_CC) {
                 double tmp[3];
@@ -1896,7 +1898,7 @@ enum ent_return ent_physics_dsf(struct ent_physics * physics,
                 dis_compute_sf(physics, projectile, Z, A,
                     ENT_PROCESS_DIS_CC_OTHER, x, Q2, sf);
                 dis_compute_sf(physics, projectile, Z, A,
-                    ENT_PROCESS_DIS_CC_OTHER, x, Q2, tmp);
+                    ENT_PROCESS_DIS_CC_TOP, x, Q2, tmp);
 
                 for (i = 0; i < 3; i++) {
                         sf[i] += tmp[i];
@@ -3763,13 +3765,13 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
-/* API interface for a Monte-Carlo interaction vertex. */
-enum ent_return ent_vertex(struct ent_physics * physics,
+/* API interface for a Monte-Carlo collision. */
+enum ent_return ent_collide(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
     struct ent_medium * medium, enum ent_process process,
     struct ent_state * product)
 {
-        ENT_ACKNOWLEDGE(ent_vertex);
+        ENT_ACKNOWLEDGE(ent_collide);
         if (product != NULL) product->pid = ENT_PID_NONE;
 
         /* Check and format the inputs. */

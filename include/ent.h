@@ -444,7 +444,7 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
     enum ent_parton parton, double x, double q2, double * value);
 
 /**
-* Compute DIS SFs.
+* Compute Structure Functions.
 *
 * @param physics    A handle for the Physics.
 * @param projectile The projectile PID.
@@ -458,7 +458,7 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
 * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
 * code is returned as detailed below.
 *
-* Compute the DIS Structure Functions (SF) for the given projectile, target,
+* Compute the DIS Structure Functions (SFs) for the given projectile, target,
 * process and kinematic parameters. Note that target must be one of
 * `ENT_PID_NEUTRON` or `ENT_PID_PROTON`.
 *
@@ -466,7 +466,7 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
 *
 *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is invalid.
 */
-enum ent_return ent_physics_dsf(struct ent_physics * physics,
+enum ent_return ent_physics_sf(struct ent_physics * physics,
     enum ent_pid projectile, enum ent_pid target, enum ent_process process,
     double x, double Q2, double * F2, double * F3, double * FL);
 
@@ -491,7 +491,7 @@ enum ent_event {
 };
 
 /**
- * Perform a Monte-Carlo interaction.
+ * Simulate a Monte-Carlo collision.
  *
  * @param physics    A handle for the Physics.
  * @param context    The Monte-Carlo simulation context.
@@ -503,7 +503,7 @@ enum ent_event {
  * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
  * code is returned as detailed below.
  *
- * Perform a Monte-Carlo interaction for the given projectile and target. If
+ * Simulated a Monte-Carlo collision for the given projectile and target. If
  * _process_ is negative the interaction process is randomly selected according
  * to the cross-sections of all possible processes.
  *
@@ -511,7 +511,7 @@ enum ent_event {
  *
  *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is inconsistent.
  */
-enum ent_return ent_vertex(struct ent_physics * physics,
+enum ent_return ent_collide(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
     struct ent_medium * medium, enum ent_process process,
     struct ent_state * product);

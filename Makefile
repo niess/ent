@@ -7,7 +7,7 @@ LIBS := -lm
 lib: lib/libent.so
 	@rm -f *.o
 
-examples: bin/example-physics bin/example-transport bin/example-vertex
+examples: bin/example-physics bin/example-transport bin/example-collide
 
 clean:
 	@rm -rf bin lib *.o
