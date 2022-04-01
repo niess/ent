@@ -149,6 +149,8 @@ struct ent_physics {
          * override.
          */
         double * cs_t;
+        /* Entry point for adjoint cross-sections, for DIS. */
+        double * cs_a;
         /* Entry point for the bias probability density function for DIS. */
         double * dis_pdf;
         /* Entry point for the bias cumulative density function for DIS. */
@@ -179,7 +181,8 @@ static void * physics_create(void)
 {
         const int np = PROGET_N - 1;
         void * v = malloc(sizeof(struct ent_physics) +
-            (2 * np * ENERGY_N + PROGET_N_DIS * DIS_Q2_N * DIS_X_N +
+            (2 * np * ENERGY_N + PROGET_N_DIS * ENERGY_N +
+             PROGET_N_DIS * DIS_Q2_N * DIS_X_N +
              PROGET_N_DIS * (DIS_Q2_N - 1) * (DIS_X_N - 1)) * sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
@@ -187,7 +190,8 @@ static void * physics_create(void)
         memset(p->sf, 0x0, sizeof(p->sf));
         p->cs_k = (double *)(p->data);
         p->cs_t = p->cs_k + np * ENERGY_N;
-        p->dis_pdf = p->cs_t + np * ENERGY_N;
+        p->cs_a = p->cs_t + np * ENERGY_N;
+        p->dis_pdf = p->cs_a + PROGET_N_DIS * ENERGY_N;
         p->dis_cdf = p->dis_pdf + PROGET_N_DIS * DIS_Q2_N * DIS_X_N;
         return v;
 }
@@ -1102,7 +1106,7 @@ static double dcs_compute(struct ent_physics * physics, enum ent_pid projectile,
  */
 static double dcs_integrate(struct ent_physics * physics,
     enum ent_pid projectile, double energy, double Z, double A,
-    enum ent_process process)
+    enum ent_process process, int adjoint)
 {
 /*
  * Coefficients for the Gaussian quadrature from:
@@ -1122,7 +1126,8 @@ static double dcs_integrate(struct ent_physics * physics,
             (process == ENT_PROCESS_DIS_CC_TOP) ||
             (process == ENT_PROCESS_DIS_NC)) {
                 /* Deep Inelastic Scattering requires a double integral. */
-                const double Q2max = 2 * ENT_MASS_NUCLEON * energy;
+                const double Q2max = adjoint ?
+                    physics->dis_Q2max : 2 * ENT_MASS_NUCLEON * energy;
                 const double Q2h = (Q2max > physics->dis_Q2max) ?
                     physics->dis_Q2max : Q2max;
                 const double ln10i = 0.4343; /*1 / ln(10) */
@@ -1136,7 +1141,8 @@ static double dcs_integrate(struct ent_physics * physics,
                         const double Q2 = physics->dis_Q2min *
                             exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dlQ2);
 
-                        const double xmin = Q2 / Q2max;
+                        const double xmin = adjoint ?
+                            physics->dis_xmin : Q2 / Q2max;
                         double dlx = log(1. / xmin);
                         const int nx = (int)(dlx * 10 * ln10i / N_GQ) + 1;
                         dlx /= nx;
@@ -1148,14 +1154,23 @@ static double dcs_integrate(struct ent_physics * physics,
                                     exp((0.5 + 0.5 * xGQ[j % N_GQ] + j / N_GQ) *
                                         dlx);
 
-                                const double y = Q2 / (Q2max * x);
+                                double y, E;
+                                if (adjoint) {
+                                        y = Q2 / (Q2 +
+                                            2 * ENT_MASS_NUCLEON * x * energy);
+                                        E = energy / (1. - y);
+                                } else {
+                                        E = energy;
+                                        y = Q2 / (Q2max * x);
+                                }
+
                                 J += wGQ[j % N_GQ] *
-                                    dcs_compute(physics, projectile, energy, Z,
-                                        A, process, x, y);
+                                    dcs_compute(physics, projectile, E, Z, A,
+                                        process, x, y) / E;
                         }
-                        I += wGQ[i % N_GQ] * Q2 / Q2max * J * dlx;
+                        I += wGQ[i % N_GQ] * Q2 * J * dlx;
                 }
-                return 0.25 * I * dlQ2;
+                return 0.25 * I * dlQ2 / (2 * ENT_MASS_NUCLEON);
         } else {
                 /* Scattering on an atomic electron. */
                 double mu = ENT_MASS_ELECTRON;
@@ -1222,15 +1237,20 @@ static void physics_tabulate_cs(struct ent_physics * physics, int compute_dis)
         };
 
         const double dlE = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
-        double * table;
+        double * cs_k, * cs_a;
         const int np = PROGET_N - 1;
         int i;
-        for (i = 0, table = physics->cs_k; i < ENERGY_N; i++, table += np) {
+        for (i = 0, cs_k = physics->cs_k, cs_a = physics->cs_a;
+            i < ENERGY_N; i++, cs_k += np, cs_a += PROGET_N_DIS) {
                 const double energy = ENERGY_MIN * exp(i * dlE);
                 int j;
                 for (j = 0; j < np; j++) {
-                        table[j] = dcs_integrate(physics, projectile[j],
-                            energy, Z[j], 1., process[j]);
+                        cs_k[j] = dcs_integrate(physics, projectile[j],
+                            energy, Z[j], 1., process[j], 0);
+                }
+                for (j = 0; j < PROGET_N_DIS; j++) {
+                        cs_a[j] = dcs_integrate(physics, projectile[j],
+                            energy, Z[j], 1., process[j], 1);
                 }
         }
 }
@@ -1607,22 +1627,24 @@ static enum ent_return proget_compute(enum ent_pid projectile,
 }
 
 /* Build the interpolation or extrapolation factors. */
-static int cross_section_prepare(double * cs, double energy, double ** cs0,
-    double ** cs1, double * p1, double * p2)
+static int cross_section_prepare(double * cs, int adjoint, double energy,
+    double ** cs0, double ** cs1, double * p1, double * p2)
 {
+        const int np = adjoint ? PROGET_N_DIS : PROGET_N - 1;
+
         int mode;
         if (energy < ENERGY_MIN) {
                 /* Log extrapolation model below Emin. */
                 mode = 1;
                 *cs0 = cs;
-                *cs1 = cs + PROGET_N - 1;
+                *cs1 = cs + np;
                 *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
                 *p2 = energy / ENERGY_MIN;
         } else if (energy >= ENERGY_MAX) {
                 /* Log extrapolation model above Emax. */
                 mode = 2;
-                *cs0 = cs + (ENERGY_N - 2) * (PROGET_N - 1);
-                *cs1 = cs + (ENERGY_N - 1) * (PROGET_N - 1);
+                *cs0 = cs + (ENERGY_N - 2) * np;
+                *cs1 = cs + (ENERGY_N - 1) * np;
                 *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
                 *p2 = energy / ENERGY_MAX;
         } else {
@@ -1633,8 +1655,8 @@ static int cross_section_prepare(double * cs, double energy, double ** cs0,
                 *p1 = log(energy / ENERGY_MIN) / dle;
                 const int i0 = (int)(*p1);
                 *p1 -= i0;
-                *cs0 = cs + i0 * (PROGET_N - 1);
-                *cs1 = cs + (i0 + 1) * (PROGET_N - 1);
+                *cs0 = cs + i0 * np;
+                *cs1 = cs + (i0 + 1) * np;
                 *p2 = 0.;
         }
         return mode;
@@ -1692,7 +1714,7 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
         double *cs0, *cs1;
         double p1, p2;
         int mode = cross_section_prepare(
-            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
+            physics->cs_t, 0, energy, &cs0, &cs1, &p1, &p2);
 
         /* Compute the relevant process-target indices. */
         if ((process == ENT_PROCESS_DIS_CC) ||
@@ -2246,8 +2268,8 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                 if (x <= 0.) continue;
 
                 /* Then sample over the conditional CDF for Q2. */
-                const double f0 = f00 * (1. - hx) + f10 * hx;
-                const double f1 = f01 * (1. - hx) + f11 * hx;
+                const double f0 = f00 * (1. - hx) + f01 * hx; /* XXX correct? */
+                const double f1 = f10 * (1. - hx) + f11 * hx;
                 const double ay = f1 - f0;
                 const double by = f0;
                 const double cy = -context->random(context) * (f0 + f1);
@@ -2305,69 +2327,127 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state, int proget,
     double * E, double * Q2)
 {
-        /* Sample y using a bias PDF as 1 / y^alpha over [y0, 1], where
-         * y0 is determined from the PDF Q2 min tabulated value.
+        /* Unpack the tables, ect ... */
+        const double * const pdf =
+            physics->dis_pdf + proget * DIS_Q2_N * DIS_X_N;
+        const double * const cdf =
+            physics->dis_cdf + proget * (DIS_Q2_N - 1) * (DIS_X_N - 1);
+
+        /* Sample (x, Q2) over a bilinear interpolation of the
+         * asymptotic pdf in (ln(x), ln(Q2)).
          */
-        const double alpha = 0.5;
-        double ry, y;
-        const double y0p =
-            physics->dis_Q2min / (2 * ENT_MASS_NUCLEON * state->energy);
-        const double y0 = y0p / (1. + y0p);
-        const double y0e = pow(y0, 1. - alpha);
+        double x;
         for (;;) {
-                ry = context->random(context);
-                y = pow(y0e + ry * (1 - y0e), 1. / (1. - alpha));
-                if ((y > 0.) && (y < 1.)) break;
-        }
-        *E = state->energy / (1. - y);
-        double pdf0 = (1. - alpha) * (y0e + ry * (1 - y0e)) / y;
+                int ix, iQ2;
+                double r;
+                /* Map the table's cell index (ix, iQ2) using a
+                 * dichotomy and rejection sampling. */
+                int i1 = (DIS_Q2_N - 1) * (DIS_X_N - 1) - 1;
+                r = cdf[i1] * context->random(context);
+                if (r <= cdf[0]) {
+                        i1 = ix = iQ2 = 0;
+                } else {
+                        int i0 = 0;
+                        while (i1 - i0 > 1) {
+                                int i2 = (i0 + i1) / 2;
+                                if (r > cdf[i2])
+                                        i0 = i2;
+                                else
+                                        i1 = i2;
+                        }
+                        ix = i1 % (DIS_X_N - 1);
+                        iQ2 = i1 / (DIS_X_N - 1);
+                        r -= cdf[i0];
 
-        /* Sample x assuming an asymptotic small x PDF. */
-        const double beta = 2.5;
-        const double x0 =
-            0.5 * ENT_MASS_W * ENT_MASS_W / (*E * y * ENT_MASS_NUCLEON);
-        const double b2 = pow(1. + 1. / x0, 1. - beta) - 1.;
-        double rx, x;
-        for (;;) {
-                rx = context->random(context);
-                x = x0 * (pow(1. + rx * b2, 1. / (1. - beta)) - 1.);
-                if ((x > 0.) || (x < 1.)) break;
-        }
-        pdf0 *= (1. - beta) * (1. + rx * b2) / (b2 * (x0 + x));
-        *Q2 = 2. * ENT_MASS_NUCLEON * (*E) * x * y;
+                        x = physics->dis_xmin * exp(ix * physics->dis_dlx);
+                        *Q2 = physics->dis_Q2min * exp(iQ2 * physics->dis_dlQ2);
+                }
 
-        /* Compute the true PDF. First let's get the DCS. */
-        const double A = 1.;
-        double Z;
-        enum ent_process process;
-        if (proget < 8) {
-                Z = (proget / 4);
-                process = (proget % 2) ?
-                    ENT_PROCESS_DIS_NC : ENT_PROCESS_DIS_CC_OTHER;
-        } else {
-                Z = (proget - 8) / 2;
-                process = ENT_PROCESS_DIS_CC_TOP;
-        }
-        int pid;
-        if (process == ENT_PROCESS_DIS_NC)
-                pid = state->pid;
-        else
-                pid = (state->pid > 0) ? state->pid + 1 : state->pid - 1;
-        const double dcs1 = dcs_dis(physics, pid, *E, Z, A, process, x, y);
+                /* Sample over the cell. First sample over the marginal
+                 * CDF for x, given the bilinear model.
+                 */
+                const double f00 = pdf[iQ2 * DIS_X_N + ix];
+                const double f01 = pdf[iQ2 * DIS_X_N + ix + 1];
+                const double f10 = pdf[(iQ2 + 1) * DIS_X_N + ix];
+                const double f11 = pdf[(iQ2 + 1) * DIS_X_N + ix + 1];
+                const double ax = f10 + f11 - f00 - f01;
+                const double bx = f00 + f01;
+                const double cx =
+                    -4. * r / (physics->dis_dlQ2 * physics->dis_dlx);
+                double dx = bx * bx - ax * cx;
+                if (dx < 0.)
+                        dx = 0.;
+                else
+                        dx = sqrt(dx);
+                const double hx = (ax != 0.) ? (dx - bx) / ax : 0.;
+                x = physics->dis_xmin * exp((ix + hx) * physics->dis_dlx);
+                if (x <= 0.) continue;
 
-        /* Then, let us compute the total cross-section. */
+                /* Then sample over the conditional CDF for Q2. */
+                const double f0 = f00 * (1. - hx) + f01 * hx; /* XXX correct? */
+                const double f1 = f10 * (1. - hx) + f11 * hx;
+                const double ay = f1 - f0;
+                const double by = f0;
+                const double cy = -context->random(context) * (f0 + f1);
+                double dy = by * by - ay * cy;
+                if (dy < 0.)
+                        dy = 0.;
+                else
+                        dy = sqrt(dy);
+                const double hy = (ay != 0.) ? (dy - by) / ay : 0.;
+                *Q2 = physics->dis_Q2min * exp((iQ2 + hy) * physics->dis_dlQ2);
+                if (*Q2 >= physics->dis_Q2max) continue;
+
+                /* Reject according to the true PDF, i.e. including the y
+                 * factors. First let us compute the relevant structure
+                 * functions.
+                 */
+                const double A = 1.;
+                const enum ent_pid projectile = (proget / 2) % 2 ?
+                    ENT_PID_NU_BAR_E : ENT_PID_NU_E;
+                double Z;
+                enum ent_process process;
+                if (proget < 8) {
+                        Z = (proget / 4.);
+                        process = (proget % 2) ?
+                            ENT_PROCESS_DIS_NC : ENT_PROCESS_DIS_CC_OTHER;
+                } else {
+                        Z = (proget - 8) / 2;
+                        process = ENT_PROCESS_DIS_CC_TOP;
+                }
+
+                double sf[3];
+                dis_compute_sf(physics, projectile, Z, A, process, x, *Q2, sf);
+
+                /* Then, reject sample accordingly. */
+                const double factor0 = fabs(sf[0]) + fabs(sf[1]);
+                const double y =
+                    *Q2 / (*Q2 + 2 * ENT_MASS_NUCLEON * x * state->energy);
+                const double y1 = 1. - y;
+                const double factor1 = sf[0] + y1 * y1 * sf[1] - y * y * sf[2];
+
+                if (context->random(context) * factor0 < factor1) break;
+        }
+
+        /* Set the initial energy. */
+        *E = state->energy + (*Q2) / (2 * ENT_MASS_NUCLEON * x);
+
+        /* Update the MC weight according to the adjoint cross-section */
         double *csl, *csh;
         double pl, ph;
-        int mode = cross_section_prepare(
-            physics->cs_k, *E, &csl, &csh, &pl, &ph);
+        int mode;
+
+        mode = cross_section_prepare(
+            physics->cs_a, 1, state->energy, &csl, &csh, &pl, &ph);
+        const double cs0 =
+            cross_section_compute(mode, proget, csl, csh, pl, ph);
+
+        mode = cross_section_prepare(
+            physics->cs_k, 0, *E, &csl, &csh, &pl, &ph);
         const double cs1 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
-        const double pdf1 = dcs1 / cs1;
 
-        /* Check and update the BMC weight. */
-        const double w = pdf1 / (pdf0 * (1. - y));
-        if (w <= 0.) return ENT_RETURN_DOMAIN_ERROR;
-        state->weight *= w;
+        state->weight *= cs0 / cs1;
 
         return ENT_RETURN_SUCCESS;
 }
@@ -2583,7 +2663,7 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
         double *csl, *csh;
         double pl, ph;
         int mode = cross_section_prepare(
-            physics->cs_k, state->energy, &csl, &csh, &pl, &ph);
+            physics->cs_k, 0, state->energy, &csl, &csh, &pl, &ph);
         const double cs0 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
         const double pdf0 = dcs0 / cs0;
@@ -2591,7 +2671,8 @@ static enum ent_return backward_sample_E(struct ent_physics * physics,
         /* Compute the true PDF at E=E_i. */
         const double dcs1 =
             dcs_compute(physics, *pid0, *E0, 1., 1., process, 0., y);
-        mode = cross_section_prepare(physics->cs_k, *E0, &csl, &csh, &pl, &ph);
+        mode = cross_section_prepare(
+            physics->cs_k, 0, *E0, &csl, &csh, &pl, &ph);
         const double cs1 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
         const double pdf1 = dcs1 / cs1;
@@ -2965,7 +3046,7 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         double *cs0, *cs1;
         double p1, p2;
         const int mode = cross_section_prepare(
-            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
+            physics->cs_t, 0, energy, &cs0, &cs1, &p1, &p2);
 
         /* Build the table of cumulative cross-section values. */
         double N0, N1, Z0, Z1;
@@ -3070,7 +3151,7 @@ static enum ent_return transport_cross_section_cc(struct ent_physics * physics,
         double *cs0, *cs1;
         double p1, p2;
         const int mode = cross_section_prepare(
-            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
+            physics->cs_t, 0, energy, &cs0, &cs1, &p1, &p2);
 
         /* Build the table of cumulative cross-section values. */
         double N0, N1, Z0, Z1;
@@ -3234,7 +3315,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
         double *cs0, *cs1;
         double p1, p2;
         const int mode = cross_section_prepare(
-            physics->cs_t, daughter->energy, &cs0, &cs1, &p1, &p2);
+            physics->cs_t, 0, daughter->energy, &cs0, &cs1, &p1, &p2);
 
         /* Check the valid backward processes and compute their a priori
          * probabilities of occurence.
@@ -3437,7 +3518,7 @@ static enum ent_return vertex_dis_compute(struct ent_physics * physics,
         double *cs0, *cs1;
         double p1, p2;
         int mode = cross_section_prepare(
-            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
+            physics->cs_t, 0, energy, &cs0, &cs1, &p1, &p2);
 
         /* Compute the relevant cross-sections and randomise the
          * target accordingly.
@@ -3634,8 +3715,8 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                         /* Elastic processes on an atomic electron. */
                         double *cs0, *cs1;
                         double p1, p2;
-                        int mode = cross_section_prepare(
-                            physics->cs_t, state->energy, &cs0, &cs1, &p1, &p2);
+                        int mode = cross_section_prepare(physics->cs_t, 0,
+                            state->energy, &cs0, &cs1, &p1, &p2);
 
                         int proget_v[6] = { -1, -1, -1, -1, -1, -1 };
                         int ancestor_v[6] = { -1, -1, -1, -1, -1, -1 };
@@ -3660,8 +3741,8 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                         /* Inverse muon decay process. */
                         double *cs0, *cs1;
                         double p1, p2;
-                        int mode = cross_section_prepare(
-                            physics->cs_t, state->energy, &cs0, &cs1, &p1, &p2);
+                        int mode = cross_section_prepare(physics->cs_t, 0,
+                            state->energy, &cs0, &cs1, &p1, &p2);
 
                         int proget_v[2] = { -1, -1 };
                         int ancestor_v[2] = { -1, -1 };
@@ -3686,8 +3767,8 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                         /* Inverse muon decay process. */
                         double *cs0, *cs1;
                         double p1, p2;
-                        int mode = cross_section_prepare(
-                            physics->cs_t, state->energy, &cs0, &cs1, &p1, &p2);
+                        int mode = cross_section_prepare(physics->cs_t, 0,
+                            state->energy, &cs0, &cs1, &p1, &p2);
 
                         int proget_v[2] = { -1, -1 };
                         int ancestor_v[2] = { -1, -1 };
