@@ -67,6 +67,7 @@
 /* Sampling for the tabulations of DIS cumulative cross-sections. */
 #define DIS_Q2_N 100
 #define DIS_X_N 100
+#define DIS_Y_N 100
 
 #ifndef M_PI
 /* Define pi, if unknown. */
@@ -137,6 +138,89 @@ enum proget_index {
         PROGET_N
 };
 
+/* Compute the process-target index. */
+static enum ent_return proget_compute(enum ent_pid projectile,
+    enum ent_pid target, enum ent_process process, int * proget)
+{
+        *proget = -1;
+
+        const int apid = abs(projectile);
+        if ((apid != ENT_PID_NU_E) && (apid != ENT_PID_NU_MU) &&
+            (apid != ENT_PID_NU_TAU))
+                return ENT_RETURN_DOMAIN_ERROR;
+        if (process == ENT_PROCESS_DIS_CC) {
+                return ENT_RETURN_DOMAIN_ERROR;
+        } else if (process == ENT_PROCESS_DIS_CC_OTHER) {
+                if (target == ENT_PID_NEUTRON)
+                        *proget = (projectile > 0) ?
+                            PROGET_CC_OTHER_NU_NEUTRON :
+                            PROGET_CC_OTHER_NU_BAR_NEUTRON;
+                else if (target == ENT_PID_PROTON)
+                        *proget = (projectile > 0) ?
+                            PROGET_CC_OTHER_NU_PROTON :
+                            PROGET_CC_OTHER_NU_BAR_PROTON;
+                else
+                        return ENT_RETURN_DOMAIN_ERROR;
+        } else if (process == ENT_PROCESS_DIS_CC_TOP) {
+                if (target == ENT_PID_NEUTRON)
+                        *proget = (projectile > 0) ?
+                            PROGET_CC_TOP_NU_NEUTRON :
+                            PROGET_CC_TOP_NU_BAR_NEUTRON;
+                else if (target == ENT_PID_PROTON)
+                        *proget = (projectile > 0) ?
+                            PROGET_CC_TOP_NU_PROTON :
+                            PROGET_CC_TOP_NU_BAR_PROTON;
+                else
+                        return ENT_RETURN_DOMAIN_ERROR;
+        } else if (process == ENT_PROCESS_DIS_NC) {
+                if (target == ENT_PID_NEUTRON)
+                        *proget = (projectile > 0) ? PROGET_NC_NU_NEUTRON :
+                                                     PROGET_NC_NU_BAR_NEUTRON;
+                else if (target == ENT_PID_PROTON)
+                        *proget = (projectile > 0) ? PROGET_NC_NU_PROTON :
+                                                     PROGET_NC_NU_BAR_PROTON;
+                else
+                        return ENT_RETURN_DOMAIN_ERROR;
+        } else {
+                if (target != ENT_PID_ELECTRON) return ENT_RETURN_DOMAIN_ERROR;
+                if (process == ENT_PROCESS_ELASTIC) {
+                        if (projectile == ENT_PID_NU_E)
+                                *proget = PROGET_ELASTIC_NU_E;
+                        else if (projectile == ENT_PID_NU_BAR_E)
+                                *proget = PROGET_ELASTIC_NU_BAR_E;
+                        else if (projectile == ENT_PID_NU_MU)
+                                *proget = PROGET_ELASTIC_NU_MU;
+                        else if (projectile == ENT_PID_NU_BAR_MU)
+                                *proget = PROGET_ELASTIC_NU_BAR_MU;
+                        else if (projectile == ENT_PID_NU_TAU)
+                                *proget = PROGET_ELASTIC_NU_TAU;
+                        else
+                                *proget = PROGET_ELASTIC_NU_BAR_TAU;
+                } else if (process == ENT_PROCESS_INVERSE_MUON) {
+                        if (projectile == ENT_PID_NU_MU)
+                                *proget = PROGET_INVERSE_NU_MU_MU;
+                        else if (projectile == ENT_PID_NU_BAR_E)
+                                *proget = PROGET_INVERSE_NU_BAR_E_MU;
+                        else
+                                return ENT_RETURN_DOMAIN_ERROR;
+                } else if (process == ENT_PROCESS_INVERSE_TAU) {
+                        if (projectile == ENT_PID_NU_TAU)
+                                *proget = PROGET_INVERSE_NU_TAU_TAU;
+                        else if (projectile == ENT_PID_NU_BAR_E)
+                                *proget = PROGET_INVERSE_NU_BAR_E_TAU;
+                        else
+                                return ENT_RETURN_DOMAIN_ERROR;
+                } else if (process == ENT_PROCESS_GLASHOW_HADRON) {
+                        if (projectile == ENT_PID_NU_BAR_E)
+                                *proget = PROGET_GLASHOW_HADRONS;
+                        else
+                                return ENT_RETURN_DOMAIN_ERROR;
+                } else
+                        return ENT_RETURN_DOMAIN_ERROR;
+        }
+        return ENT_RETURN_SUCCESS;
+}
+
 /* Opaque Physics object. */
 struct ent_physics {
         /* Index to the PDF data. */
@@ -153,6 +237,12 @@ struct ent_physics {
         double * dis_pdf;
         /* Entry point for the bias cumulative density function for DIS. */
         double * dis_cdf;
+        /* Entry point for DIS DDCS support in x. */
+        double * dis_xlim;
+        /* Entry point for forward DIS DCS support in y, as function of Ei. */
+        double * dis_ylim_f;
+        /* Entry point for backward DIS DCS support in y, as function of Ef. */
+        double * dis_ylim_b;
         /* Sampling factors for x, in bias DIS. */
         double dis_xmin, dis_dlx, dis_rx;
         /* Sampling factors for Q2, in bias DIS. */
@@ -180,7 +270,9 @@ static void * physics_create(void)
         const int np = PROGET_N - 1;
         void * v = malloc(sizeof(struct ent_physics) +
             (2 * np * ENERGY_N + PROGET_N_DIS * DIS_Q2_N * DIS_X_N +
-             PROGET_N_DIS * (DIS_Q2_N - 1) * (DIS_X_N - 1)) * sizeof(double));
+             PROGET_N_DIS * (DIS_Q2_N - 1) * (DIS_X_N - 1) +
+             2 * PROGET_N_DIS * DIS_Y_N * ENERGY_N +
+             4 * PROGET_N_DIS * ENERGY_N) * sizeof(double));
         if (v == NULL) return NULL;
         struct ent_physics * p = v;
         p->pdf = NULL;
@@ -189,6 +281,12 @@ static void * physics_create(void)
         p->cs_t = p->cs_k + np * ENERGY_N;
         p->dis_pdf = p->cs_t + np * ENERGY_N;
         p->dis_cdf = p->dis_pdf + PROGET_N_DIS * DIS_Q2_N * DIS_X_N;
+        p->dis_xlim = p->dis_cdf +
+            PROGET_N_DIS * (DIS_Q2_N - 1) * (DIS_X_N - 1);
+        p->dis_ylim_f = p->dis_xlim +
+            2 * PROGET_N_DIS * DIS_Y_N * ENERGY_N;
+        p->dis_ylim_b = p->dis_ylim_f + 2 * PROGET_N_DIS * ENERGY_N;
+
         return v;
 }
 
@@ -1097,7 +1195,289 @@ static double dcs_compute(struct ent_physics * physics, enum ent_pid projectile,
         }
 }
 
-/* Compute the total cross-section for a processes using a Gaussian
+/* Map DIS DDCS support as x, for fix y. */
+static void dis_compute_support_x(struct ent_physics * physics, 
+    enum ent_pid projectile, double energy, double Z, double A,
+    enum ent_process process, double y, double * xlim)
+{
+        double xmin = physics->dis_Q2min /
+            (2 * ENT_MASS_NUCLEON * energy * y);
+        double xmax = physics->dis_Q2max /
+            (2 * ENT_MASS_NUCLEON * energy * y);
+        if (xmax > 1.) xmax = 1.;
+        if (xmin >= xmax) {
+                xlim[0] = xmax;
+                xlim[1] = xmax;
+                return;
+        }
+
+        /* Find the lower bound of the support. First let us find an initial
+         * bracketing using an exponential search.
+         */
+        double r, x0, x1;
+
+        r = 2.;
+        x0 = x1 = xmin;
+        for (;;) {
+                const double d = dcs_compute(physics, projectile, energy, Z,
+                    A, process, x1, y);
+                if (d > 0.) break;
+                x0 = x1;
+                x1 *= r;
+                if (x1 >= xmax) {
+                        /* Restart with a lower increment. */
+                        x0 = x1 = xmin;
+                        r = 0.5 * (1. + r);
+
+                        if (r - 1. < 1E-02) {
+                                xlim[0] = xmax;
+                                xlim[1] = xmax;
+                                return;
+                        }
+                }
+        }
+        if (x1 > x0) {
+                /* Refine the bracketing with a binary search. */
+                double tol = 1E-03 * xmin;
+                if (tol > 1E-05) tol = 1E-05;
+                while (x1 - x0 > tol) {
+                        const double x2 = 0.5 * (x0 + x1);
+                        const double d = dcs_compute(physics, projectile,
+                            energy, Z, A, process, x2, y);
+                        if (d > 0) {
+                                x1 = x2;
+                        } else {
+                                x0 = x2;
+                        }
+                }
+                xmin = x1;
+        }
+
+        /* Find the upper bound of the support. */
+        r = 2.;
+        x0 = x1 = xmax;
+        for (;;) {
+                const double d = dcs_compute(physics, projectile, energy, Z,
+                    A, process, x0, y);
+                if (d > 0.) break;
+                x1 = x0;
+                x0 /= r;
+                if (x0 <= xmin) {
+                        /* Restart with a lower increment. */
+                        x0 = x1 = xmax;
+                        r = 0.5 * (1. + r);
+                }
+        }
+        if (x1 > x0) {
+                /* Refine the bracketing with a binary search. */
+                double tol = 1E-03 * xmax;
+                if (tol > 1E-05) tol = 1E-05;
+                while (x1 - x0 > tol) {
+                        const double x2 = 0.5 * (x0 + x1);
+                        const double d = dcs_compute(physics, projectile,
+                            energy, Z, A, process, x2, y);
+                        if (d > 0) {
+                                x0 = x2;
+                        } else {
+                                x1 = x2;
+                        }
+                }
+                xmax = x0;
+        }
+
+        xlim[0] = xmin;
+        xlim[1] = xmax;
+}
+
+/* Interpolate x support for DIS DDCS. */
+static void dis_get_support_x(struct ent_physics * physics,
+    enum proget_index proget, double energy, double y, double * xmin,
+    double * xmax)
+{
+        const double ymin = physics->dis_Q2min /
+            (2 * ENT_MASS_NUCLEON * energy);
+        if (ymin >= 1.) {
+                *xmin = *xmax = 1.;
+                return;
+        }
+
+        const double dle = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
+        const double dly = -log(ymin) / (DIS_Y_N - 1);
+
+        double he = log(energy / ENERGY_MIN) / dle;
+        int ie = (int)he;
+        if (ie >= ENERGY_N - 1) {
+                *xmin = physics->dis_Q2min /
+                    (2 * ENT_MASS_NUCLEON * energy * y);
+                *xmax = physics->dis_Q2max /
+                    (2 * ENT_MASS_NUCLEON * energy * y);
+                if (*xmax > 1.) *xmax = 1.;
+                return;
+        } else if (ie < 0) {
+                ie = 0;
+                he = 0.;
+        } else {
+                he -= ie;
+        }
+
+        double hy = log(y / ymin) / dly;
+        int iy = (int)hy;
+        if (iy >= DIS_Y_N - 1) {
+                *xmin = *xmax = 1.;
+                return;
+        } else if (iy < 0) {
+                iy = 0;
+                hy = 0.;
+        } else {
+                hy -= iy;
+        }
+
+        int offset = 2 * proget * ENERGY_N * DIS_Y_N;
+        double * x00 = physics->dis_xlim + offset + 2 * (ie * DIS_Y_N + iy);
+        double * x01 = physics->dis_xlim + offset + 2 * (ie * DIS_Y_N + iy + 1);
+        double * x10 =
+            physics->dis_xlim + offset + 2 * ((ie + 1) * DIS_Y_N + iy);
+        double * x11 =
+            physics->dis_xlim + offset + 2 * ((ie + 1) * DIS_Y_N + iy + 1);
+
+        *xmin = x00[0] * (1. - he) * (1. - hy) + x01[0] * (1. - he) * hy +
+                x10[0] * he * (1. - hy) + x11[0] * he * hy;
+        *xmax = x00[1] * (1. - he) * (1. - hy) + x01[1] * (1. - he) * hy +
+                x10[1] * he * (1. - hy) + x11[1] * he * hy;
+}
+
+/* Map DIS DCS support as Ef, in backward case. */
+static void dis_compute_support_y(struct ent_physics * physics, 
+    enum ent_pid projectile, double energy, double Z, double A,
+    enum ent_process process, double * ylim)
+{
+        double ymin = physics->dis_Q2min /
+            (physics->dis_Q2min + 2 * ENT_MASS_NUCLEON * energy);
+        double ymax = 1.;
+
+        /* Find the lower bound of the support. First let us find an initial
+         * bracketing using an exponential search.
+         */
+        double r, y0, y1;
+        enum proget_index proget;
+        const enum ent_pid target = (Z > 0.) ? ENT_PID_PROTON : ENT_PID_NEUTRON;
+        proget_compute(projectile, target, process, &proget);
+
+        r = 2.;
+        y0 = y1 = ymin;
+        for (;;) {
+                double xmin, xmax;
+                dis_get_support_x(
+                    physics, proget, energy / (1. - y1), y1, &xmin, &xmax);
+                if (xmin < xmax) break;
+                y0 = y1;
+                y1 *= r;
+                if (y1 >= ymax) {
+                        /* Restart with a lower increment. */
+                        y0 = y1 = ymin;
+                        r = 0.5 * (1. + r);
+
+                        if (r - 1. < 1E-04) {
+                                ylim[0] = ymax;
+                                ylim[1] = ymax;
+                                return;
+                        }
+                }
+        }
+        if (y1 > y0) {
+                /* Refine the bracketing with a binary search. */
+                double tol = 1E-04 * ymin;
+                if (tol > 1E-06) tol = 1E-06;
+                while (y1 - y0 > tol) {
+                        const double y2 = 0.5 * (y0 + y1);
+                        double xmin, xmax;
+                        dis_get_support_x(physics, proget, energy / (1. - y2),
+                            y2, &xmin, &xmax);
+                        if (xmin < xmax) {
+                                y1 = y2;
+                        } else {
+                                y0 = y2;
+                        }
+                }
+                ymin = y1;
+        }
+
+        /* Find the upper bound of the support. */
+        r = 2.;
+        y0 = y1 = ymax;
+        for (;;) {
+                double xmin, xmax;
+                dis_get_support_x(
+                    physics, proget, energy / (1. - y0), y0, &xmin, &xmax);
+                if (xmin < xmax) break;
+                y1 = y0;
+                y0 /= r;
+                if (y0 <= ymin) {
+                        /* Restart with a lower increment. */
+                        y0 = y1 = ymax;
+                        r = 0.5 * (1. + r);
+                }
+        }
+        if (y1 > y0) {
+                /* Refine the bracketing with a binary search. */
+                double tol = 1E-04 * ymax;
+                if (tol > 1E-06) tol = 1E-06;
+                while (y1 - y0 > tol) {
+                        const double y2 = 0.5 * (y0 + y1);
+                        double xmin, xmax;
+                        dis_get_support_x(physics, proget, energy / (1. - y2),
+                            y2, &xmin, &xmax);
+                        if (xmin < xmax) {
+                                y0 = y2;
+                        } else {
+                                y1 = y2;
+                        }
+                }
+                ymax = y0;
+        }
+
+        ylim[0] = ymin;
+        ylim[1] = ymax;
+}
+
+/* Interpolate y support for DIS DCS. */
+static void dis_get_support_y(struct ent_physics * physics,
+    enum proget_index proget, double energy, int forward, double * ymin,
+    double * ymax)
+{
+        const double dle = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
+
+        double he = log(energy / ENERGY_MIN) / dle;
+        int ie = (int)he;
+        if (ie >= ENERGY_N - 1) {
+                if (forward) {
+                        *ymin = physics->dis_Q2min /
+                            (2 * ENT_MASS_NUCLEON * energy );
+                } else {
+                        *ymin = physics->dis_Q2min /
+                            (physics->dis_Q2min +
+                             2 * ENT_MASS_NUCLEON * energy);
+                }
+                *ymax = 1.;
+                return;
+        } else if (ie < 0) {
+                ie = 0;
+                he = 0.;
+        } else {
+                he -= ie;
+        }
+
+        int offset = 2 * proget * ENERGY_N;
+        double * dis_ylim = forward ? physics->dis_ylim_f :
+            physics->dis_ylim_b;
+        double * y0 = dis_ylim + offset + 2 * ie;
+        double * y1 = dis_ylim + offset + 2 * (ie + 1);
+
+        *ymin = y0[0] * (1. - he) + y1[0] * he;
+        *ymax = y0[1] * (1. - he) + y1[1] * he;
+}
+
+/* Compute the total cross-section for a process using a Gaussian
  * quadrature.
  */
 static double dcs_integrate(struct ent_physics * physics,
@@ -1122,12 +1502,20 @@ static double dcs_integrate(struct ent_physics * physics,
             (process == ENT_PROCESS_DIS_CC_TOP) ||
             (process == ENT_PROCESS_DIS_NC)) {
                 /* Deep Inelastic Scattering requires a double integral. */
-                const double ymin = physics->dis_Q2min /
-                    (2 * ENT_MASS_NUCLEON * energy);
+                const enum ent_pid target =
+                    (Z > 0.) ? ENT_PID_PROTON : ENT_PID_NEUTRON;
+                enum proget_index proget;
+                proget_compute(projectile, target, process, &proget);
+
+                double ymin, ymax;
+                dis_get_support_y(physics, proget, energy, 1, &ymin, &ymax);
+                if (ymin >= ymax) return 0.;
+
                 const double ln10i = 0.4343; /* 1 / ln(10) */
-                double dly = -log(ymin);
-                const int n_pts_per_decade = 10;
-                const int ny = (int)(dly * n_pts_per_decade * ln10i / N_GQ) + 1;
+                double dly = log(ymax / ymin);
+                const int n_pts_per_decade = 20;
+                int ny = (int)(dly * n_pts_per_decade * ln10i / N_GQ);
+                if (ny < 4) ny = 4;
                 dly /= ny;
 
                 double I = 0.;
@@ -1136,14 +1524,14 @@ static double dcs_integrate(struct ent_physics * physics,
                         const double y = ymin *
                             exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dly);
 
-                        const double xmin = physics->dis_Q2min /
-                            (2 * ENT_MASS_NUCLEON * energy * y);
-                        double xmax = physics->dis_Q2max /
-                            (2 * ENT_MASS_NUCLEON * energy * y);
-                        if (xmax > 1.) xmax = 1.;
+                        double xmin, xmax;
+                        dis_get_support_x(
+                            physics, proget, energy, y, &xmin, &xmax);
+                        if (xmin >= xmax) continue;
+
                         double dlx = log(1. / xmin);
-                        const int nx =
-                            (int)(dlx * n_pts_per_decade * ln10i / N_GQ) + 1;
+                        int nx = (int)(dlx * n_pts_per_decade * ln10i / N_GQ);
+                        if (nx < 4) nx = 4;
                         dlx /= nx;
 
                         double J = 0.;
@@ -1226,15 +1614,61 @@ static void physics_tabulate_cs(struct ent_physics * physics, int compute_dis)
         };
 
         const double dlE = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
-        double * table;
+        double * cs_k;
         const int np = PROGET_N - 1;
         int i;
-        for (i = 0, table = physics->cs_k; i < ENERGY_N; i++, table += np) {
+        for (i = 0, cs_k = physics->cs_k; i < ENERGY_N; i++, cs_k += np) {
                 const double energy = ENERGY_MIN * exp(i * dlE);
+                const double ymin = physics->dis_Q2min /
+                     (2 * ENT_MASS_NUCLEON * energy);
+                const double dly = -log(ymin) / (DIS_Y_N - 1);
+
                 int j;
                 for (j = 0; j < np; j++) {
-                        table[j] = dcs_integrate(physics, projectile[j],
+                        if (j < PROGET_N_DIS) {
+                                double * ylim = physics->dis_ylim_f + 
+                                    2 * (j * ENERGY_N + i);
+                                ylim[0] = ymin;
+                                ylim[1] = 1.;
+
+                                double *  xlim = physics->dis_xlim +
+                                    2 * (j * ENERGY_N + i) * DIS_Y_N;
+                                int k, inside = 0;
+                                for (k = 0; k < DIS_Y_N; k++, xlim += 2) {
+                                        const double y = ymin * exp(k * dly);
+                                        dis_compute_support_x(physics,
+                                            projectile[j], energy, Z[j], 1.,
+                                            process[j], y, xlim);
+
+                                        if (inside) {
+                                                if (xlim[0] < xlim[1]) {
+                                                        ylim[1] = y;
+                                                } else {
+                                                        inside = 0;
+                                                }
+                                        } else {
+                                                if (xlim[0] < xlim[1]) {
+                                                        ylim[0] = y;
+                                                        inside = 1;
+                                                }
+                                        }
+                                }
+                        }
+
+                        cs_k[j] = dcs_integrate(physics, projectile[j],
                             energy, Z[j], 1., process[j]);
+                }
+        }
+
+        /* Tabulate DIS DCS support in backward mode. */
+        for (i = 0; i < PROGET_N_DIS; i++) {
+                double * ylim = physics->dis_ylim_b + 2 * i * ENERGY_N;
+
+                int j;
+                for (j = 0; j < ENERGY_N; j++, ylim += 2) {
+                        const double energy = ENERGY_MIN * exp(j * dlE);
+                        dis_compute_support_y(physics, projectile[i], energy,
+                            Z[i], 1., process[i], ylim);
                 }
         }
 }
@@ -1525,89 +1959,6 @@ void ent_physics_destroy(struct ent_physics ** physics)
 
         free(*physics);
         *physics = NULL;
-}
-
-/* Compute the process-target index. */
-static enum ent_return proget_compute(enum ent_pid projectile,
-    enum ent_pid target, enum ent_process process, int * proget)
-{
-        *proget = -1;
-
-        const int apid = abs(projectile);
-        if ((apid != ENT_PID_NU_E) && (apid != ENT_PID_NU_MU) &&
-            (apid != ENT_PID_NU_TAU))
-                return ENT_RETURN_DOMAIN_ERROR;
-        if (process == ENT_PROCESS_DIS_CC) {
-                return ENT_RETURN_DOMAIN_ERROR;
-        } else if (process == ENT_PROCESS_DIS_CC_OTHER) {
-                if (target == ENT_PID_NEUTRON)
-                        *proget = (projectile > 0) ?
-                            PROGET_CC_OTHER_NU_NEUTRON :
-                            PROGET_CC_OTHER_NU_BAR_NEUTRON;
-                else if (target == ENT_PID_PROTON)
-                        *proget = (projectile > 0) ?
-                            PROGET_CC_OTHER_NU_PROTON :
-                            PROGET_CC_OTHER_NU_BAR_PROTON;
-                else
-                        return ENT_RETURN_DOMAIN_ERROR;
-        } else if (process == ENT_PROCESS_DIS_CC_TOP) {
-                if (target == ENT_PID_NEUTRON)
-                        *proget = (projectile > 0) ?
-                            PROGET_CC_TOP_NU_NEUTRON :
-                            PROGET_CC_TOP_NU_BAR_NEUTRON;
-                else if (target == ENT_PID_PROTON)
-                        *proget = (projectile > 0) ?
-                            PROGET_CC_TOP_NU_PROTON :
-                            PROGET_CC_TOP_NU_BAR_PROTON;
-                else
-                        return ENT_RETURN_DOMAIN_ERROR;
-        } else if (process == ENT_PROCESS_DIS_NC) {
-                if (target == ENT_PID_NEUTRON)
-                        *proget = (projectile > 0) ? PROGET_NC_NU_NEUTRON :
-                                                     PROGET_NC_NU_BAR_NEUTRON;
-                else if (target == ENT_PID_PROTON)
-                        *proget = (projectile > 0) ? PROGET_NC_NU_PROTON :
-                                                     PROGET_NC_NU_BAR_PROTON;
-                else
-                        return ENT_RETURN_DOMAIN_ERROR;
-        } else {
-                if (target != ENT_PID_ELECTRON) return ENT_RETURN_DOMAIN_ERROR;
-                if (process == ENT_PROCESS_ELASTIC) {
-                        if (projectile == ENT_PID_NU_E)
-                                *proget = PROGET_ELASTIC_NU_E;
-                        else if (projectile == ENT_PID_NU_BAR_E)
-                                *proget = PROGET_ELASTIC_NU_BAR_E;
-                        else if (projectile == ENT_PID_NU_MU)
-                                *proget = PROGET_ELASTIC_NU_MU;
-                        else if (projectile == ENT_PID_NU_BAR_MU)
-                                *proget = PROGET_ELASTIC_NU_BAR_MU;
-                        else if (projectile == ENT_PID_NU_TAU)
-                                *proget = PROGET_ELASTIC_NU_TAU;
-                        else
-                                *proget = PROGET_ELASTIC_NU_BAR_TAU;
-                } else if (process == ENT_PROCESS_INVERSE_MUON) {
-                        if (projectile == ENT_PID_NU_MU)
-                                *proget = PROGET_INVERSE_NU_MU_MU;
-                        else if (projectile == ENT_PID_NU_BAR_E)
-                                *proget = PROGET_INVERSE_NU_BAR_E_MU;
-                        else
-                                return ENT_RETURN_DOMAIN_ERROR;
-                } else if (process == ENT_PROCESS_INVERSE_TAU) {
-                        if (projectile == ENT_PID_NU_TAU)
-                                *proget = PROGET_INVERSE_NU_TAU_TAU;
-                        else if (projectile == ENT_PID_NU_BAR_E)
-                                *proget = PROGET_INVERSE_NU_BAR_E_TAU;
-                        else
-                                return ENT_RETURN_DOMAIN_ERROR;
-                } else if (process == ENT_PROCESS_GLASHOW_HADRON) {
-                        if (projectile == ENT_PID_NU_BAR_E)
-                                *proget = PROGET_GLASHOW_HADRONS;
-                        else
-                                return ENT_RETURN_DOMAIN_ERROR;
-                } else
-                        return ENT_RETURN_DOMAIN_ERROR;
-        }
-        return ENT_RETURN_SUCCESS;
 }
 
 /* Build the interpolation or extrapolation factors. */
@@ -2309,26 +2660,7 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state, int proget,
     double * E, double * Q2)
 {
-        /* Sample y using a bias PDF as 1 / y^alpha over [y0, 1], where
-         * y0 is determined from the PDF Q2 min tabulated value.
-         */
-        const double alpha = 0.5;
-        double ry, y;
-        const double y0p =
-            physics->dis_Q2min / (2 * ENT_MASS_NUCLEON * state->energy);
-        const double y0 = y0p / (1. + y0p);
-        const double y0e = pow(y0, 1. - alpha);
-        for (;;) {
-                ry = context->random(context);
-                y = pow(y0e + ry * (1 - y0e), 1. / (1. - alpha));
-                if ((y > 0.) && (y < 1.)) break;
-        }
-        *E = state->energy / (1. - y);
-        const double pdf0 = (1. - alpha) * (y0e + ry * (1 - y0e)) / y;
-
-        /* Sample x given the conditional PDF for y and using the inverse CDF
-         * method. First let us get the projectile, the target and the process.
-         */
+        /* Get back the projectile, the target and the process. */
         const double A = 1.;
         double Z;
         enum ent_process process;
@@ -2346,67 +2678,134 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
         else
                 pid = (state->pid > 0) ? state->pid + 1 : state->pid - 1;
 
-        /* Then, let us compute the CDF integrand over x using a log sampling.
+        /* Sample y using a bias PDF as 1 / y^alpha over [ymin, ymax], where
+         * the support is determined from tabulated value as function of the
+         * final energy.
          */
-        const double xmin =
-            physics->dis_Q2min / (2 * ENT_MASS_NUCLEON * *E * y);
-        double xmax =
-            physics->dis_Q2max / (2 * ENT_MASS_NUCLEON * *E * y);
-        if (xmax > 1.) xmax = 1.;
-        double dlx = log(xmax / xmin);
-        const double ln10i = 0.4343; /* 1 / ln(10) */
-        const int n_pts_per_decade = 10;
-        const int nx = (int)(dlx * n_pts_per_decade * ln10i) + 1;
-        dlx /= nx - 1;
-
-        double pdf[nx];
-        int i;
-        for (i = 0; i < nx; i++) {
-                const double xi = xmin * exp(i * dlx);
-                pdf[i] = dcs_dis(physics, pid, *E, Z, A, process, xi, y) * xi;
+        double ymin, ymax;
+        dis_get_support_y(physics, proget, state->energy, 1, &ymin, &ymax);
+        if (ymin >= ymax) {
+                /* This is not expected to occur. It likely implies that
+                 * the support tabulation routine failed.
+                 */
+                return ENT_RETURN_DOMAIN_ERROR;
         }
 
-        /* Compute the CDF. */
-        double cdf[nx - 1], ci = 0.;
-        for (i = 0; i < nx - 1; i++) {
-                ci += 0.5 * dlx * (pdf[i] + pdf[i + 1]);
-                cdf[i] = ci;
+        const double alpha = 0.5;
+        double ry, y;
+        const double bmin = pow(ymin, 1. - alpha);
+        const double bmax = pow(ymax, 1. - alpha);
+        for (;;) {
+                ry = (bmax - bmin) * context->random(context) + bmin;
+                y = pow(ry, 1. / (1. - alpha));
+                if ((y > ymin) && (y < ymax)) break;
+        }
+        *E = state->energy / (1. - y);
+        double pdf0 = (1. - alpha) * ry / (y * (bmax - bmin));
+
+        /* Sample x. */
+        double xmin, xmax;
+        dis_get_support_x(physics, proget, *E, y, &xmin, &xmax);
+        if (xmin >= xmax) {
+                return ENT_RETURN_DOMAIN_ERROR;
         }
 
-        /* Sample x from the CDF. */
-        double rx = context->random(context) * cdf[nx - 2];
-        int i0 = 0, i1 = nx - 2;
-        while (i1 - i0 > 1) {
-                const int i2 = (i0 + i1) / 2;
-                if (rx > cdf[i2]) i0 = i2;
-                else i1 = i2;
-        }
-        const double ax = 0.5 * (pdf[i1] - pdf[i0]);
-        const double bx = pdf[i0];
-        const double cx = -(rx - cdf[i0]) / dlx;
-        double dx = bx * bx - 4 * ax * cx;
-        dx = (dx < 0.) ? 0. : sqrt(dx);
-        double hx = (dx - bx) / (2 * ax);
-        if (hx < 0.) hx = 0.;
-        else if (hx > 1.) hx = 1.;
-        const double x = xmin * exp(dlx * (i0 + hx));
-        *Q2 = 2. * ENT_MASS_NUCLEON * (*E) * x * y;
+        const double MX =
+            (process == ENT_PROCESS_DIS_NC) ? ENT_MASS_Z : ENT_MASS_W;
+        const double x0 = 0.5 * MX * MX / (*E * y * ENT_MASS_NUCLEON);
 
-        /* Compute the true marginal PDF over y. */
-        double *csl, *csh;
-        double pl, ph;
-        const int mode = cross_section_prepare(
-            physics->cs_k, *E, &csl, &csh, &pl, &ph);
-        const double cs1 =
-            cross_section_compute(mode, proget, csl, csh, pl, ph);
-        const double pdf1 = cdf[nx - 2] / cs1;
+        double pdf1;
+        if (1 /* (proget < 8) || (x0 < 1.) */) {
+                /* Sample x assuming an asymptotic small x PDF. */
+                const double beta = 2.5;
+                const double bmin = pow(1. + xmin / x0, 1. - beta);
+                const double bmax = pow(1. + xmax / x0, 1. - beta);
+                double rx, x;
+                for (;;) {
+                        rx = (bmin - bmax) * context->random(context) + bmax;
+                        x = x0 * (pow(rx, 1. / (1. - beta)) - 1.);
+                        if ((x > xmin) || (x < xmax)) break;
+                }
+                pdf0 *= (beta - 1.) * rx / ((bmin - bmax) * (x0 + x));
+                *Q2 = 2. * ENT_MASS_NUCLEON * (*E) * x * y;
+
+                /* Compute the true PDF. */
+                const double dcs1 =
+                    dcs_dis(physics, pid, *E, Z, A, process, x, y);
+
+                double *csl, *csh;
+                double pl, ph;
+                const int mode = cross_section_prepare(
+                     physics->cs_k, *E, &csl, &csh, &pl, &ph);
+                const double cs1 =
+                     cross_section_compute(mode, proget, csl, csh, pl, ph);
+
+                pdf1 = dcs1 / cs1;
+        } else {
+                /* Sample x given the conditional PDF for y and using the
+                 * inverse CDF method. First, let us compute the CDF integrand
+                 * over x using a log sampling.
+                 */
+                double dlx = log(xmax / xmin);
+                const double ln10i = 0.4343; /* 1 / ln(10) */
+                const int n_pts_per_decade = 40;
+                int nx = (int)(dlx * n_pts_per_decade * ln10i) + 1;
+                if (nx < 101) nx = 101;
+                dlx /= nx - 1;
+
+                double pdf[nx];
+                int i;
+                for (i = 0; i < nx; i++) {
+                        const double xi = xmin * exp(i * dlx);
+                        pdf[i] = dcs_dis(
+                            physics, pid, *E, Z, A, process, xi, y) * xi;
+                }
+
+                /* Compute the CDF. */
+                double cdf[nx - 1], ci = 0.;
+                for (i = 0; i < nx - 1; i++) {
+                        ci += 0.5 * dlx * (pdf[i] + pdf[i + 1]);
+                        cdf[i] = ci;
+                }
+
+                /* Sample x from the CDF. */
+                double rx = context->random(context) * cdf[nx - 2];
+                int i0 = 0, i1 = nx - 2;
+                while (i1 - i0 > 1) {
+                        const int i2 = (i0 + i1) / 2;
+                        if (rx > cdf[i2]) i0 = i2;
+                        else i1 = i2;
+                }
+                const double ax = 0.5 * (pdf[i1] - pdf[i0]);
+                const double bx = pdf[i0];
+                const double cx = -(rx - cdf[i0]) / dlx;
+                double dx = bx * bx - 4 * ax * cx;
+                dx = (dx < 0.) ? 0. : sqrt(dx);
+                double hx = (dx - bx) / (2 * ax);
+                if (hx < 0.) hx = 0.;
+                else if (hx > 1.) hx = 1.;
+                const double x = xmin * exp(dlx * (i0 + hx));
+                *Q2 = 2. * ENT_MASS_NUCLEON * (*E) * x * y;
+
+                /* Compute the true marginal PDF over y. */
+                double *csl, *csh;
+                double pl, ph;
+                const int mode = cross_section_prepare(
+                    physics->cs_k, *E, &csl, &csh, &pl, &ph);
+                const double cs1 =
+                    cross_section_compute(mode, proget, csl, csh, pl, ph);
+
+                pdf1 = cdf[nx - 2] / cs1;
+        }
 
         /* Check and update the BMC weight. */
         const double w = pdf1 / (pdf0 * (1. - y));
-        if (w <= 0.) return ENT_RETURN_DOMAIN_ERROR;
-        state->weight *= w;
-
-        return ENT_RETURN_SUCCESS;
+        if (w <= 0.) {
+                return ENT_RETURN_DOMAIN_ERROR;
+        } else {
+                state->weight *= w;
+                return ENT_RETURN_SUCCESS;
+        }
 }
 
 /* Sample the inelasticity, _y_, for an interaction with an electron. The
@@ -2878,6 +3277,10 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                         if ((rc = backward_sample_EQ2(physics, context, state,
                                  proget, &Enu, &Q2)) == ENT_RETURN_SUCCESS)
                                 break;
+                        /* This should not occur, except due to numeric rounding
+                         * errors. Thus, whenever it happens, let us generate
+                         * a new event.
+                         */
                 }
                 if (rc != ENT_RETURN_SUCCESS) return rc;
 
