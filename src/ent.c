@@ -1122,23 +1122,28 @@ static double dcs_integrate(struct ent_physics * physics,
             (process == ENT_PROCESS_DIS_CC_TOP) ||
             (process == ENT_PROCESS_DIS_NC)) {
                 /* Deep Inelastic Scattering requires a double integral. */
-                const double Q2max = 2 * ENT_MASS_NUCLEON * energy;
-                const double Q2h = (Q2max > physics->dis_Q2max) ?
-                    physics->dis_Q2max : Q2max;
-                const double ln10i = 0.4343; /*1 / ln(10) */
-                double dlQ2 = log(Q2h / physics->dis_Q2min);
-                const int nQ2 = (int)(dlQ2 * 10 * ln10i / N_GQ) + 1;
-                dlQ2 /= nQ2;
+                const double ymin = physics->dis_Q2min /
+                    (2 * ENT_MASS_NUCLEON * energy);
+                const double ln10i = 0.4343; /* 1 / ln(10) */
+                double dly = -log(ymin);
+                const int n_pts_per_decade = 10;
+                const int ny = (int)(dly * n_pts_per_decade * ln10i / N_GQ) + 1;
+                dly /= ny;
 
                 double I = 0.;
                 int i;
-                for (i = 0; i < nQ2 * N_GQ; i++) {
-                        const double Q2 = physics->dis_Q2min *
-                            exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dlQ2);
+                for (i = 0; i < ny * N_GQ; i++) {
+                        const double y = ymin *
+                            exp((0.5 + 0.5 * xGQ[i % N_GQ] + i / N_GQ) * dly);
 
-                        const double xmin = Q2 / Q2max;
+                        const double xmin = physics->dis_Q2min /
+                            (2 * ENT_MASS_NUCLEON * energy * y);
+                        double xmax = physics->dis_Q2max /
+                            (2 * ENT_MASS_NUCLEON * energy * y);
+                        if (xmax > 1.) xmax = 1.;
                         double dlx = log(1. / xmin);
-                        const int nx = (int)(dlx * 10 * ln10i / N_GQ) + 1;
+                        const int nx =
+                            (int)(dlx * n_pts_per_decade * ln10i / N_GQ) + 1;
                         dlx /= nx;
 
                         double J = 0.;
@@ -1148,14 +1153,13 @@ static double dcs_integrate(struct ent_physics * physics,
                                     exp((0.5 + 0.5 * xGQ[j % N_GQ] + j / N_GQ) *
                                         dlx);
 
-                                const double y = Q2 / (Q2max * x);
                                 J += wGQ[j % N_GQ] *
                                     dcs_compute(physics, projectile, energy, Z,
-                                        A, process, x, y);
+                                        A, process, x, y) * x;
                         }
-                        I += wGQ[i % N_GQ] * Q2 / Q2max * J * dlx;
+                        I += wGQ[i % N_GQ] * y * J * dlx;
                 }
-                return 0.25 * I * dlQ2;
+                return 0.25 * I * dly;
         } else {
                 /* Scattering on an atomic electron. */
                 double mu = ENT_MASS_ELECTRON;
@@ -2246,7 +2250,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                 if (x <= 0.) continue;
 
                 /* Then sample over the conditional CDF for Q2. */
-                const double f0 = f00 * (1. - hx) + f01 * hx; /* XXX correct? */
+                const double f0 = f00 * (1. - hx) + f01 * hx;
                 const double f1 = f10 * (1. - hx) + f11 * hx;
                 const double ay = f1 - f0;
                 const double by = f0;
@@ -2323,7 +2327,7 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
         const double pdf0 = (1. - alpha) * (y0e + ry * (1 - y0e)) / y;
 
         /* Sample x given the conditional PDF for y and using the inverse CDF
-         * method. First let us get the projectile, process etc.
+         * method. First let us get the projectile, the target and the process.
          */
         const double A = 1.;
         double Z;
@@ -2344,43 +2348,48 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
 
         /* Then, let us compute the CDF integrand over x using a log sampling.
          */
-        const int n = (proget >= 8) ? 40 : 40; /* XXX How much? */
-        double p[n];
         const double xmin =
             physics->dis_Q2min / (2 * ENT_MASS_NUCLEON * *E * y);
-        const double xmax =
+        double xmax =
             physics->dis_Q2max / (2 * ENT_MASS_NUCLEON * *E * y);
-        const double lx = log(xmax / xmin) / (n - 1);
+        if (xmax > 1.) xmax = 1.;
+        double dlx = log(xmax / xmin);
+        const double ln10i = 0.4343; /* 1 / ln(10) */
+        const int n_pts_per_decade = 10;
+        const int nx = (int)(dlx * n_pts_per_decade * ln10i) + 1;
+        dlx /= nx - 1;
+
+        double pdf[nx];
         int i;
-        for (i = 0; i < n; i++) {
-                const double xi = xmin * exp(i * lx);
-                p[i] = dcs_dis(physics, pid, *E, Z, A, process, xi, y) * xi;
+        for (i = 0; i < nx; i++) {
+                const double xi = xmin * exp(i * dlx);
+                pdf[i] = dcs_dis(physics, pid, *E, Z, A, process, xi, y) * xi;
         }
 
-        /* Compute the CDF for the inverse sampling. */
-        double c[n - 1], ci = 0.;
-        for (i = 0; i < n - 1; i++) {
-                ci += 0.5 * lx * (p[i] + p[i + 1]);
-                c[i] = ci;
+        /* Compute the CDF. */
+        double cdf[nx - 1], ci = 0.;
+        for (i = 0; i < nx - 1; i++) {
+                ci += 0.5 * dlx * (pdf[i] + pdf[i + 1]);
+                cdf[i] = ci;
         }
 
-        /* Sample x. */
-        double rx = context->random(context) * c[n - 2];
-        int i0 = 0, i1 = n - 2;
+        /* Sample x from the CDF. */
+        double rx = context->random(context) * cdf[nx - 2];
+        int i0 = 0, i1 = nx - 2;
         while (i1 - i0 > 1) {
                 const int i2 = (i0 + i1) / 2;
-                if (rx > c[i2]) i0 = i2;
+                if (rx > cdf[i2]) i0 = i2;
                 else i1 = i2;
         }
-        const double ax = 0.5 * (p[i1] - p[i0]);
-        const double bx = p[i0];
-        const double cx = -(rx - c[i0]) / lx;
+        const double ax = 0.5 * (pdf[i1] - pdf[i0]);
+        const double bx = pdf[i0];
+        const double cx = -(rx - cdf[i0]) / dlx;
         double dx = bx * bx - 4 * ax * cx;
         dx = (dx < 0.) ? 0. : sqrt(dx);
         double hx = (dx - bx) / (2 * ax);
         if (hx < 0.) hx = 0.;
         else if (hx > 1.) hx = 1.;
-        const double x = xmin * exp(lx * (i0 + hx));
+        const double x = xmin * exp(dlx * (i0 + hx));
         *Q2 = 2. * ENT_MASS_NUCLEON * (*E) * x * y;
 
         /* Compute the true marginal PDF over y. */
@@ -2390,7 +2399,7 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
             physics->cs_k, *E, &csl, &csh, &pl, &ph);
         const double cs1 =
             cross_section_compute(mode, proget, csl, csh, pl, ph);
-        const double pdf1 = c[n - 2] / cs1;
+        const double pdf1 = cdf[nx - 2] / cs1;
 
         /* Check and update the BMC weight. */
         const double w = pdf1 / (pdf0 * (1. - y));
