@@ -19,7 +19,7 @@ import lhapdf
 FORMAT_TAG = "/ent/"
 
 """ENT data format version"""
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 
 """Physics constants"""
@@ -97,7 +97,7 @@ class StructureFunctions(NamedTuple):
         print(f"Computing DIS {process} SFs for a(n) "
               f"{projectile} on a {target}")
 
-        if (process == "NC") and (args.scheme != "ZM-VFNS"):
+        if ("BGR18" in args.o) and (process == "NC"):
             # Denner's prescription, used in BGR18.
             mt = pdf.quarkMass(6)
             eps = GF * mt**2 / (8 * numpy.sqrt(2) * numpy.pi**2)
@@ -150,9 +150,16 @@ class StructureFunctions(NamedTuple):
         else:
             c = contrib
 
+        # BMC algorithm to be used. For BGR18, the top DCS is awkward at low
+        # energy. It requires a a specific algorithm in backward mode.
+        if ("BGR18" in args.o) and (c == Contribution.TOP):
+            mode = 1
+        else:
+            mode = 0
+
         # Pack the table header
         nx, nq, nf = len(self.x), len(self.q), 3
-        n = numpy.array((nx, nq, nf), dtype="i4")
+        n = numpy.array((nx, nq, nf, mode), dtype="i4")
         x = numpy.array(self.x, dtype="f4")
         Q2 = numpy.array(self.q**2, dtype="f4")
         data = numpy.empty((nx, nq, nf), dtype="f4")
@@ -282,8 +289,21 @@ if __name__ == "__main__":
         description="compute DIS structure functions using APFEL.")
     parser.add_argument("pdf", help="PDF file")
     parser.add_argument("-o", help="output ENT file")
-    parser.add_argument("--order", help="expansion order", type=int, default=2)
-    parser.add_argument("--scheme", help="mass scheme", default="FONLL-C")
+    parser.add_argument("--order", help="expansion order", type=int)
+    parser.add_argument("--scheme", help="mass scheme")
 
     args = parser.parse_args()
+
+    if args.scheme is None:
+        if "CMS11" in args.o:
+            args.scheme = "ZM-VFNS"
+        else:
+            args.scheme = "FONLL-C"
+
+    if args.order is None:
+        if "CMS11" in args.o:
+            args.order = 1
+        else:
+            args.order = 2
+
     compute_sf()
