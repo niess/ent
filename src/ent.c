@@ -3379,9 +3379,13 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                 if (rc != ENT_RETURN_SUCCESS) return rc;
 
                 /* Backup the initial state. */
-                if (product != NULL) memcpy(product, state, sizeof(*product));
+                if (product != NULL) {
+                        memcpy(product, state, sizeof(*product));
+                        product->pid = ENT_PID_HADRON;
+                }
 
                 /* Update the MC state. */
+                double pmu;
                 if ((proget >= 8) || ((proget % 2) == 0)) {
                         /* Charged current event. */
                         state->pid += (state->pid > 0) ? 1 : -1;
@@ -3399,7 +3403,7 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                                 return ENT_RETURN_DOMAIN_ERROR;
 
                         /* Compute the mother's neutrino direction. */
-                        const double pmu = sqrt(Emu * (Emu + 2. * mu));
+                        pmu = sqrt(Emu * (Emu + 2. * mu));
                         double ct = (Emu - 0.5 * (Q2 + mu * mu) / Enu) / pmu;
                         if (ct > 1.)
                                 ct = 1.;
@@ -3411,14 +3415,43 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                         transport_rotate(state, ct, cp, sp);
                 } else {
                         /* Neutral current event. */
-                        const double Ep = state->energy;
+                        pmu = state->energy;
                         state->energy = Enu;
-                        double ct = 1. - 0.5 * Q2 / (Enu * Ep);
+                        double ct = 1. - 0.5 * Q2 / (Enu * pmu);
                         if (ct < -1.) ct = -1.;
                         const double phi = 2. * M_PI * context->random(context);
                         const double cp = cos(phi);
                         const double sp = sin(phi);
                         transport_rotate(state, ct, cp, sp);
+                }
+
+                /* Compute the hadron's average direction from momentum
+                 * conservation.
+                 */
+                if (product != NULL) {
+                        product->direction[0] =
+                            state->direction[0] * state->energy -
+                            pmu * product->direction[0];
+                        product->direction[1] =
+                            state->direction[1] * state->energy -
+                            pmu * product->direction[1];
+                        product->direction[2] =
+                            state->direction[2] * state->energy -
+                            pmu * product->direction[2];
+                        double d =
+                            product->direction[0] * product->direction[0] +
+                            product->direction[1] * product->direction[1] +
+                            product->direction[2] * product->direction[2];
+                        if (d > 0.) {
+                                d = 1. / sqrt(d);
+                                product->direction[0] *= d;
+                                product->direction[1] *= d;
+                                product->direction[2] *= d;
+                        }
+
+                        /* Set the energy. */
+                        const double y = 1. - product->energy / state->energy;
+                        product->energy = state->energy * y;
                 }
         } else if (proget < PROGET_GLASHOW_HADRONS) {
                 /* This is an interaction with an atomic electron and a
@@ -3514,76 +3547,100 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
                 N0 = 0.;
                 N1 = A - Z;
         }
+        /* Charged current DIS of a neutrino on a neutron. */
         cs[0] = ((N0 > 0.) ?
             N0 * cross_section_compute(mode, 0, cs0, cs1, p1, p2) : 0.);
+        /* Neutral current DIS of a neutrino on a neutron. */
         cs[1] = cs[0] + ((N0 > 0.) ?
             N0 * cross_section_compute(mode, 1, cs0, cs1, p1, p2) : 0.);
+        /* Charged current DIS of an anti-neutrino on a neutron. */
         cs[2] = cs[1] + ((N1 > 0.) ?
             N1 * cross_section_compute(mode, 2, cs0, cs1, p1, p2) : 0.);
+        /* Neutral current DIS of an anti-neutrino on a neutron. */
         cs[3] = cs[2] + ((N1 > 0.) ?
             N1 * cross_section_compute(mode, 3, cs0, cs1, p1, p2) : 0.);
+        /* Charged current DIS of a neutrino on a proton. */
         cs[4] = cs[3] + ((Z0 > 0.) ?
             Z0 * cross_section_compute(mode, 4, cs0, cs1, p1, p2) : 0.);
+        /* Neutral current DIS of a neutrino on a proton. */
         cs[5] = cs[4] + ((Z0 > 0.) ?
             Z0 * cross_section_compute(mode, 5, cs0, cs1, p1, p2) : 0.);
+        /* Charged current DIS of an anti-neutrino on a proton. */
         cs[6] = cs[5] + ((Z1 > 0.) ?
             Z1 * cross_section_compute(mode, 6, cs0, cs1, p1, p2) : 0.);
+        /* Neutral current DIS of an anti-neutrino on a proton. */
         cs[7] = cs[6] + ((Z1 > 0.) ?
             Z1 * cross_section_compute(mode, 7, cs0, cs1, p1, p2) : 0.);
+        /* Top production for a CC neutrino on a neutron. */
         cs[8] = cs[7] + ((N0 > 0.) ?
             N0 * cross_section_compute(mode, 8, cs0, cs1, p1, p2) : 0.);
+        /* Top production for a CC anti-neutrino on a neutron. */
         cs[9] = cs[8] + ((N1 > 0.) ?
             N1 * cross_section_compute(mode, 9, cs0, cs1, p1, p2) : 0.);
+        /* Top production for a CC neutrino on a proton. */
         cs[10] = cs[9] + ((Z0 > 0.) ?
             Z0 * cross_section_compute(mode, 10, cs0, cs1, p1, p2) : 0.);
+        /* Top production for a CC anti-neutrino on a proton. */
         cs[11] = cs[10] + ((Z1 > 0.) ?
             Z1 * cross_section_compute(mode, 11, cs0, cs1, p1, p2) : 0.);
+        /* Elastic scattering of a nu_e on a an electron. */
         if (projectile == ENT_PID_NU_E)
                 cs[12] = cs[11] +
                     Z * cross_section_compute(mode, 12, cs0, cs1, p1, p2);
         else
                 cs[12] = cs[11];
+        /* Elastic scattering of an anti nu_e on a an electron. */
         if (projectile == ENT_PID_NU_BAR_E)
                 cs[13] = cs[12] +
                     Z * cross_section_compute(mode, 13, cs0, cs1, p1, p2);
         else
                 cs[13] = cs[12];
+        /* Elastic scattering of a nu_mu on a an electron. */
         if (projectile == ENT_PID_NU_MU)
                 cs[14] = cs[13] +
                     Z * cross_section_compute(mode, 14, cs0, cs1, p1, p2);
         else
                 cs[14] = cs[13];
+        /* Elastic scattering of an anti nu_mu on a an electron. */
         if (projectile == ENT_PID_NU_BAR_MU)
                 cs[15] = cs[14] +
                     Z * cross_section_compute(mode, 15, cs0, cs1, p1, p2);
         else
                 cs[15] = cs[14];
+        /* Elastic scattering of a nu_tau on a an electron. */
         if (projectile == ENT_PID_NU_TAU)
                 cs[16] = cs[15] +
                     Z * cross_section_compute(mode, 16, cs0, cs1, p1, p2);
         else
                 cs[16] = cs[15];
+        /* Elastic scattering of an anti nu_tau on a an electron. */
         if (projectile == ENT_PID_NU_BAR_TAU)
                 cs[17] = cs[16] +
                     Z * cross_section_compute(mode, 17, cs0, cs1, p1, p2);
         else
                 cs[17] = cs[16];
+        /* Inverse muon decay with a nu_mu projectile. */
         if (projectile == ENT_PID_NU_MU)
                 cs[18] = cs[17] +
                     Z * cross_section_compute(mode, 18, cs0, cs1, p1, p2);
         else
                 cs[18] = cs[17];
+        /* Inverse tau decay with a nu_tau projectile. */
         if (projectile == ENT_PID_NU_TAU)
                 cs[19] =
                     cs[18] + cross_section_compute(mode, 19, cs0, cs1, p1, p2);
         else
                 cs[19] = cs[18];
         if (projectile == ENT_PID_NU_BAR_E) {
+                /* Inverse muon decay with an anti nu_e projectile. */
                 const double d =
                     Z * cross_section_compute(mode, 20, cs0, cs1, p1, p2);
+                /* Inverse tau decay with an anti nu_e projectile. */
                 cs[20] = cs[19] + d;
                 cs[21] = cs[20] +
                     Z * cross_section_compute(mode, 21, cs0, cs1, p1, p2);
+                /* Anti nu_e projectile on an electron with hadrons production.
+                 */
                 cs[22] = cs[21] + d * (ENT_WIDTH_W / ENT_WIDTH_W_TO_MUON - 1.);
         } else {
                 cs[20] = cs[19];
@@ -4298,6 +4355,11 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
                 double d =
                     (proget == 0) ? cs[proget] : cs[proget] - cs[proget - 1];
                 state->weight *= d / cs[PROGET_N - 1];
+        }
+
+        if (product != NULL) {
+                product->weight = (product->pid != ENT_PID_NONE) ?
+                    state->weight : 0.;
         }
 
         if (proget_ != NULL) *proget_ = proget;
