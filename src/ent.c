@@ -799,10 +799,8 @@ static enum ent_return physics_load(
                         float * sf1 = (*physics)->sf[i]->f;
                         int j;
                         for (j = 0; j < nx * nQ2; j++, sf0 += 3, sf1 += 3) {
-                                const float f2 = sf0[0] + sf0[1];
-                                const float f3 = sf0[1] - sf0[0];
-                                sf1[0] = 0.5 * (f2 + f3);
-                                sf1[1] = 0.5 * (f2 - f3);
+                                sf1[0] = sf0[0];
+                                sf1[1] = -sf0[1];
                                 sf1[2] = sf0[2];
                         }
 
@@ -812,9 +810,8 @@ static enum ent_return physics_load(
                                 goto error;
                         }
                 } else {
-                        int freeze[3] = { 0, i >= 8, 0 };
                         if ((rc = grid_load((*physics)->sf + i, stream,
-                            freeze, (*physics)->bmc_mode + i)) !=
+                            NULL, (*physics)->bmc_mode + i)) !=
                             ENT_RETURN_SUCCESS) {
                                 goto error;
                         }
@@ -999,8 +996,8 @@ static void dis_compute_sf(struct ent_physics * physics,
                         const double cbar = xfx[-4 * eps + nf];
                         const double F2 = N * dbar + Z * ubar + A * cbar;
 
-                        sf[0] = 2 * F1;
-                        sf[1] = 2 * F2;
+                        sf[0] = 2 * (F1 + F2);
+                        sf[1] = 2 * (F1 - F2);
                         sf[2] = 0.;
                 } else if (process == ENT_PROCESS_DIS_CC_TOP) {
                         /* Charged current DIS process (only bottom). */
@@ -1008,7 +1005,7 @@ static void dis_compute_sf(struct ent_physics * physics,
                         const double F1 = A * b;
 
                         sf[0] = 2 * F1;
-                        sf[1] = 0.;
+                        sf[1] = 2 * F1;
                         sf[2] = 0.;
                 } else {
                         /* Neutral current DIS process. */
@@ -1035,10 +1032,13 @@ static void dis_compute_sf(struct ent_physics * physics,
                         const double F4 = Z * dbar + N * ubar +
                                           A * (sbar + bbar);
 
-                        sf[0] = 0.5 * (gp2 * F1 + gpp2 * F2 + gm2 * F3 +
-                                       gpm2 * F4);
-                        sf[1] = 0.5 * (gm2 * F1 + gpm2 * F2 + gp2 * F3 +
-                                       gpp2 * F4);
+                        const double Fp1 = 0.5 * (gp2 * F1 + gpp2 * F2 +
+                            gm2 * F3 + gpm2 * F4);
+                        const double Fp2 = (gm2 * F1 + gpm2 * F2 + gp2 * F3 +
+                            gpp2 * F4);
+
+                        sf[0] = Fp1 + Fp2;
+                        sf[1] = Fp1 - Fp2;
                         sf[2] = 0.;
                 }
         } else {
@@ -1087,12 +1087,15 @@ static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
             ENT_MASS_Z * ENT_MASS_Z : ENT_MASS_W * ENT_MASS_W;
         const double r = MX2 / (MX2 + Q2);
         const double y1 = 1. - y;
-        const double factor = r * r * (sf[0] + y1 * y1 * sf[1] - y * y * sf[2]);
+        const double c0 = 1. + y1 * y1;
+        const double c1 = 1. - y1 * y1;
+        const double c2 = -y * y;
+        const double factor = r * r * (c0 * sf[0] + c1 * sf[1] + c2 * sf[2]);
         if (factor <= 0.) return 0.;
 
         /* Return the DCS. */
         return energy * factor * (ENT_PHYS_GF * ENT_PHYS_HBC) *
-            (ENT_PHYS_GF * ENT_PHYS_HBC) * ENT_MASS_NUCLEON / M_PI;
+            (ENT_PHYS_GF * ENT_PHYS_HBC) * ENT_MASS_NUCLEON / (2 * M_PI);
 }
 
 /* DCS for elastic scattering on electrons. */
@@ -2041,35 +2044,6 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
                     ENERGY_N * (PROGET_N - 1) * sizeof(*(*physics)->cs_t));
         }
 
-        /* XXX */
-        stream = fopen("ratio.txt", "w+");
-        int i;
-        for (i = 0; i < PROGET_N_DIS; i++) {
-                int j;
-                const double dle =
-                    log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
-                for (j = 0; j < ENERGY_N; j++) {
-                        const double energy = ENERGY_MIN * exp(j * dle);
-                        double * xlim = (*physics)->dis_xlim +
-                            3 * (i * ENERGY_N + j) * DIS_Y_N;
-                        const double ymin = (*physics)->dis_Q2min /
-                            (2 * ENT_MASS_NUCLEON * energy);
-                        const double dly = -log(ymin) / (DIS_Y_N - 1);
-                        int k;
-                        for (k = 0; k < DIS_Y_N; k++) {
-                                if (xlim[3 * k  + 2] >= 1E+02) {
-                                        const double y = ymin * exp(k * dly);
-                                        fprintf(stream,
-                                            "%2d %.5E %.5E %.5E %.5E %.5E\n",
-                                            i, energy, y, xlim[3 * k],
-                                            xlim[3 * k + 1], xlim[3 * k + 2]);
-                                }
-                        }
-                }
-        }
-        fclose(stream);
-        stream = NULL;
-
 exit:
         if (stream != NULL) fclose(stream);
         ENT_RETURN(rc);
@@ -2397,9 +2371,9 @@ enum ent_return ent_physics_sf(struct ent_physics * physics,
                 ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
         }
 
-        if (F2 != NULL) *F2 = sf[0] + sf[1];
-        if (F3 != NULL) *F3 = (sf[0] - sf[1]) / x;
-        if (FL != NULL) *FL = sf[2] + sf[2];
+        if (F2 != NULL) *F2 = sf[0];
+        if (F3 != NULL) *F3 = sf[1];
+        if (FL != NULL) *FL = sf[2];
 
         return ENT_RETURN_SUCCESS;
 }

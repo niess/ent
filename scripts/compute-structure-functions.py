@@ -164,21 +164,17 @@ class StructureFunctions(NamedTuple):
         Q2 = numpy.array(self.q**2, dtype="f4")
         data = numpy.empty((nx, nq, nf), dtype="f4")
 
-        # Redefine SFs for ENT
-        s2 = apfel.GetSin2ThetaW()
-        fct = 0.5 if self.process == "CC" else \
-            (4 * (Q2 + MZ**2) / Q2 * s2 * (1 - s2) / self.rho)**2
-
         sgn = 1 if self.projectile == "neutrino" else -1
-        xF3 = sgn * self.xF3
 
         if self.process == "CC":
-            data[:,:,0] = fct * (self.F2[:,:,c] + xF3[:,:,c]).T
-            data[:,:,1] = fct * (self.F2[:,:,c] - xF3[:,:,c]).T
-            data[:,:,2] = fct * self.FL[:,:,c].T
+            data[:,:,0] = self.F2[:,:,c].T
+            data[:,:,1] = sgn * self.xF3[:,:,c].T
+            data[:,:,2] = self.FL[:,:,c].T
         else:
-            data[:,:,0] = fct * (self.F2 + xF3).T
-            data[:,:,1] = fct * (self.F2 - xF3).T
+            s2 = apfel.GetSin2ThetaW()
+            fct = 32 * ((Q2 + MZ**2) / Q2 * s2 * (1 - s2) / self.rho)**2
+            data[:,:,0] = fct * self.F2.T
+            data[:,:,1] = sgn * fct * self.xF3.T
             data[:,:,2] = fct * self.FL.T
 
         with open(path, "ab") as f:
