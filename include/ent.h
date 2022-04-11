@@ -67,8 +67,32 @@ enum ent_pid {
         ENT_PID_NU_BAR_E = -12,
         /** The positron. */
         ENT_PID_POSITRON = -11,
+        /** The anti-top quark. */
+        ENT_PID_TOP_BAR = -6,
+        /** The anti-top quark. */
+        ENT_PID_BOTTOM_BAR = -5,
+        /** The anti-bottom quark. */
+        ENT_PID_CHARM_BAR = -4,
+        /** The anti-strange quark. */
+        ENT_PID_STRANGE_BAR = -3,
+        /** The anti-up quark. */
+        ENT_PID_UP_BAR = -2,
+        /** The anti-down quark. */
+        ENT_PID_DOWN_BAR = -1,
         /** Tag for none product. */
         ENT_PID_NONE = 0,
+        /* The down quark. */
+        ENT_PID_DOWN = 1,
+        /* The up quark. */
+        ENT_PID_UP = 2,
+        /* The strange quark. */
+        ENT_PID_STRANGE = 3,
+        /* The charm quark. */
+        ENT_PID_CHARM = 4,
+        /* The bottom quark. */
+        ENT_PID_BOTTOM = 5,
+        /* The top quark. */
+        ENT_PID_TOP = 6,
         /** The electron. */
         ENT_PID_ELECTRON = 11,
         /** The electron neutrino. */
@@ -86,7 +110,13 @@ enum ent_pid {
         /** A neutron. */
         ENT_PID_NEUTRON = 2112,
         /** A proton. */
-        ENT_PID_PROTON = 2212
+        ENT_PID_PROTON = 2212,
+        /** W- boson. */
+        ENT_PID_W_MINUS = -24,
+        /** Z boson. */
+        ENT_PID_Z = 23,
+        /** W+ boson. */
+        ENT_PID_W_PLUS = 24
 };
 
 /**
@@ -490,6 +520,9 @@ enum ent_event {
         ENT_EVENT_INTERACTION
 };
 
+/** Maximum number of collision products. */
+#define ENT_PRODUCTS_SIZE 3
+
 /**
  * Simulate a Monte-Carlo collision.
  *
@@ -498,7 +531,7 @@ enum ent_event {
  * @param state      The initial / final state of the tracked particle.
  * @param medium     The target medium.
  * @param process    The interaction process, if specified.
- * @param product    Any additional interaction product, or `NULL` if not
+ * @param products   Additional interaction product(s), or `NULL` if not
  *                   required.
  * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
  * code is returned as detailed below.
@@ -514,7 +547,7 @@ enum ent_event {
 enum ent_return ent_collide(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
     struct ent_medium * medium, enum ent_process process,
-    struct ent_state * product);
+    struct ent_state * products);
 
 /**
  * Perform a Monte-Carlo transport.
@@ -522,7 +555,7 @@ enum ent_return ent_collide(struct ent_physics * physics,
  * @param physics    A handle for the Physics or `NULL`.
  * @param context    The Monte-Carlo simulation context.
  * @param state      The initial / final state of the tracked particle.
- * @param product    Any additional interaction product, or `NULL` if not
+ * @param products   Additional interaction product(s), or `NULL` if not
  *                   required.
  * @param event      The event that ended the Monte-Carlo transport.
  * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
@@ -540,7 +573,7 @@ enum ent_return ent_collide(struct ent_physics * physics,
  */
 enum ent_return ent_transport(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
-    struct ent_state * product, enum ent_event * event);
+    struct ent_state * products, enum ent_event * event);
 
 /**
  * Return a string describing a `ent_return` code.

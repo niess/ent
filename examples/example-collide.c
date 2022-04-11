@@ -56,7 +56,7 @@ int main(int nargc, char * argv[])
             (nargc > 3) ? atoi(argv[3]) : ENT_PROCESS_DIS_CC;
         double Z = (nargc > 4) ? atof(argv[4]) : 0.5;
         double A = (nargc > 5) ? atof(argv[5]) : 1.;
-        int events = (nargc > 6) ? atoi(argv[6]) : 1000000;
+        int events = (nargc > 6) ? atoi(argv[6]) : 10000;
 
         /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
@@ -104,10 +104,10 @@ int main(int nargc, char * argv[])
         for (i = 0; i < events; i++) {
                 struct ent_state neutrino = { projectile, energy, 0., 0., 1.,
                         { 0., 0., 0. }, { 0., 0., 1. } };
-                struct ent_state product;
+                struct ent_state products[ENT_PRODUCTS_SIZE];
                 ent_collide(
-                    physics, &context, &neutrino, &medium, process, &product);
-                fprintf(stream, "%12.5lE\n", product.energy / energy);
+                    physics, &context, &neutrino, &medium, process, products);
+                fprintf(stream, "%12.5lE\n", products[0].energy / energy);
         }
         fclose(stream);
 
