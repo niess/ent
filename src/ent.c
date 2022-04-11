@@ -3900,12 +3900,18 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                 const double rho0 = context->ancestor(context, npid, daughter);
                 if (rho0 > 0.) {
                         /* Charged current processes. */
-                        proget_v[0] = (daughter->pid > 0) ?
-                            PROGET_CC_OTHER_NU_NEUTRON :
-                            PROGET_CC_OTHER_NU_BAR_NEUTRON;
-                        proget_v[1] = proget_v[0] + 4;
-                        proget_v[2] = proget_v[0] + 8;
-                        proget_v[3] = proget_v[0] + 10;
+                        if (daughter->pid > 0) {
+                                proget_v[0] = PROGET_CC_OTHER_NU_NEUTRON;
+                                proget_v[1] = PROGET_CC_OTHER_NU_PROTON;
+                                proget_v[2] = PROGET_CC_TOP_NU_NEUTRON;
+                                proget_v[3] = PROGET_CC_TOP_NU_PROTON;
+                        } else {
+                                proget_v[0] = PROGET_CC_OTHER_NU_BAR_NEUTRON;
+                                proget_v[1] = PROGET_CC_OTHER_NU_BAR_PROTON;
+                                proget_v[2] = PROGET_CC_TOP_NU_BAR_NEUTRON;
+                                proget_v[3] = PROGET_CC_TOP_NU_BAR_PROTON;
+                        }
+
                         p[0] = rho0 * N *
                             cross_section_compute(
                                 mode, proget_v[0], cs0, cs1, p1, p2);
@@ -3913,11 +3919,10 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                             rho0 * Z *
                                 cross_section_compute(
                                     mode, proget_v[1], cs0, cs1, p1, p2);
-                        p[2] = rho0 * N *
+                        p[2] = p[1] + rho0 * N *
                             cross_section_compute(
                                 mode, proget_v[2], cs0, cs1, p1, p2);
-                        p[3] = p[0] +
-                            rho0 * Z *
+                        p[3] = p[2] + rho0 * Z *
                                 cross_section_compute(
                                     mode, proget_v[3], cs0, cs1, p1, p2);
 
@@ -3935,7 +3940,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                         /* Inverse muon decay process. */
                         ancestor_muon_inverse(context, daughter, Z, &np,
                             proget_v, p, ancestor_v, mode, cs0, cs1, p1, p2);
-                } else {
+                } else if (daughter->pid == ENT_PID_TAU) {
                         /* Inverse tau decay process. */
                         ancestor_tau_inverse(context, daughter, Z, &np,
                             proget_v, p, ancestor_v, mode, cs0, cs1, p1, p2);
@@ -4296,6 +4301,7 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
         }
 
         if (proget_ != NULL) *proget_ = proget;
+
         return ENT_RETURN_SUCCESS;
 }
 
