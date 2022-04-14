@@ -1079,6 +1079,32 @@ static void dis_compute_sf(struct ent_physics * physics,
         }
 }
 
+/* Particle rest mass for a given PID. */
+static double rest_mass(enum ent_pid pid)
+{
+        const double mass[25] = {
+            0., 4.67E-03, 2.16E-03, 93E-03, 1.27, 4.18, 172.76, 0., 0., 0., 0.,
+            ENT_MASS_ELECTRON,
+            0.,
+            ENT_MASS_MUON,
+            0.,
+            ENT_MASS_TAU,
+            0.,
+            0., 0., 0., 0., 0., 0.,
+            ENT_MASS_Z,
+            ENT_MASS_W
+        };
+
+        int aid = abs(pid);
+        if (aid < sizeof(mass) / sizeof(mass[0])) {
+                return mass[aid];
+        } else if ((pid == ENT_PID_NEUTRON) || (pid == ENT_PID_PROTON)) {
+                return ENT_MASS_NUCLEON;
+        } else {
+                return 0.;
+        }
+}
+
 /* DCS for Deep Inelastic Scattering (DIS) on nucleons. */
 static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
     double energy, double Z, double A, enum ent_process process, double x,
@@ -3252,32 +3278,6 @@ static void polar_electron(
                 *cr = 1.;
 }
 
-/* Particle rest mass for a given PID. */
-static double rest_mass(enum ent_pid pid)
-{
-        const double mass[25] = {
-            0., 4.67E-03, 2.16E-03, 93E-03, 1.27, 4.18, 172.76, 0., 0., 0., 0.,
-            ENT_MASS_ELECTRON,
-            0.,
-            ENT_MASS_MUON,
-            0.,
-            ENT_MASS_TAU,
-            0.,
-            0., 0., 0., 0., 0., 0.,
-            ENT_MASS_Z,
-            ENT_MASS_W
-        };
-
-        int aid = abs(pid);
-        if (aid < sizeof(mass) / sizeof(mass[0])) {
-                return mass[aid];
-        } else if ((pid == ENT_PID_NEUTRON) || (pid == ENT_PID_PROTON)) {
-                return ENT_MASS_NUCLEON;
-        } else {
-                return 0.;
-        }
-}
-
 /* Two body decay (in CM frame). */
 static void decay_two_body_cm(struct ent_context * context,
     enum ent_pid pid0, enum ent_pid pid1, enum ent_pid pid2,
@@ -3369,7 +3369,7 @@ static void decay_two_body(struct ent_context * context,
 
 /* Two body backward decay. */
 static void undecay_two_body(struct ent_context * context,
-    struct ent_state * daughter1, struct ent_state * mother,
+    const struct ent_state * daughter1, struct ent_state * mother,
     struct ent_state * daughter2)
 {
         /* CM decay. */
@@ -3380,34 +3380,29 @@ static void undecay_two_body(struct ent_context * context,
         /* Compute Lorentz transform parameters. */
         const double m1 = rest_mass(daughter1->pid);
         const double p1 = sqrt(daughter1->energy * daughter1->energy - m1 * m1);
-        const double dpx = p1 * daughter1->direction[0] - p1s[0];
-        const double dpy = p1 * daughter1->direction[1] - p1s[1];
-        const double dpz = p1 * daughter1->direction[2] - p1s[2];
-        const double gamma = 1. + (dpx * dpx + dpy * dpy + dpz * dpz) /
+        const double dp[3] = {
+                p1 * daughter1->direction[0] - p1s[0],
+                p1 * daughter1->direction[1] - p1s[1],
+                p1 * daughter1->direction[2] - p1s[2]
+        };
+        const double dp2 = dp[0] * dp[0] + dp[1] * dp[1] + dp[2] * dp[2];
+        const double gamma = 1. + dp2 /
             (daughter1->energy * E1s + p1 * (daughter1->direction[0] * p1s[0] +
              daughter1->direction[1] * p1s[1] +
              daughter1->direction[2] * p1s[2]) + m1 * m1);
         const double b1 = (gamma + 1.) / (gamma * (daughter1->energy + E1s));
-        const double b[3] = {b1 * dpx, b1 * dpy, b1 * dpz};
+        const double b[3] = {b1 * dp[0], b1 * dp[1], b1 * dp[2]};
 
         /* Apply transform. */
         mother->energy = gamma * M;
         daughter2->energy = mother->energy - daughter1->energy;
 
         int i;
+        const double nrm0 = 1. / sqrt(dp2);
         for (i = 0; i < 3; i++) {
-                mother->direction[i] = b[i];
+                mother->direction[i] = dp[i] * nrm0;
                 daughter2->direction[i] =
-                    mother->energy * mother->direction[i] -
-                    daughter1->direction[i];
-        }
-
-        const double nrm0 = 1. / sqrt(
-            mother->direction[0] * mother->direction[0] +
-            mother->direction[1] * mother->direction[1] +
-            mother->direction[2] * mother->direction[2]);
-        for (i = 0; i < 3; i++) {
-                mother->direction[i] *= nrm0;
+                    mother->energy * b[i] - p1 * daughter1->direction[i];
         }
         memcpy(mother->position, daughter1->position,
             sizeof(mother->position));
@@ -3431,7 +3426,6 @@ static void undecay_two_body(struct ent_context * context,
         const double w = s0 * s0 * p1 / (s1 * s1 * p0);
 
         mother->weight *= w;
-        daughter1->weight *= w;
         daughter2->weight *= w;
 }
 
@@ -3686,6 +3680,7 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
 
                         /* Compute the mother's neutrino direction. */
                         pmu = sqrt(Emu * (Emu + 2. * mu));
+                        /* XXX total or kinetic energy? */
                         double ct = (Emu - 0.5 * (Q2 + mu * mu) / Enu) / pmu;
                         if (ct > 1.)
                                 ct = 1.;
@@ -3874,9 +3869,11 @@ static enum ent_return transport_vertex_backward_top_decay(
         /* Randomise the neutrino direction. */
         const double mu = rest_mass(abs(ancestor) - 1);
         const double Emu = Enu - t_quark.energy;
-        const double pmu = sqrt(Emu * (Emu + 2. * mu));
+        const double pmu = sqrt(Emu * Emu - mu * mu);
+        const double mt = rest_mass(t_quark.pid);
+        const double pt = sqrt(t_quark.energy * t_quark.energy - mt * mt);
         double ct = (Emu - 0.5 * (Q2 + mu * mu) / Enu) / pmu;
-        ct = (Enu - pmu * ct) / t_quark.energy; /* lepton to hadron angle. */
+        ct = (Enu - pmu * ct) / pt; /* lepton to hadron angle. */
         if (ct > 1.)
                 ct = 1.;
         else if (ct < -1.)
@@ -3885,9 +3882,11 @@ static enum ent_return transport_vertex_backward_top_decay(
         const double cp = cos(phi);
         const double sp = sin(phi);
         transport_rotate(state->direction, ct, cp, sp);
+        // XXX No effect ?
 
         /* Copy back the products. */
         if (products != NULL) {
+                memset(products, 0x0, sizeof *products);
                 products->pid = (ancestor > 0) ? ancestor - 1 : ancestor + 1;
                 products->energy = Emu;
                 products->weight = state->weight;
@@ -4856,40 +4855,7 @@ enum ent_return ent_collide(struct ent_physics * physics,
                 ENT_RETURN(vertex_backward(physics, context, state, medium, -1.,
                     process, products, NULL));
 
-        /* XXX Check decays ...
-        if (context->ancestor == NULL) {
-                struct ent_state d1, d2;
-
-                d1.pid = ENT_PID_W_PLUS;
-                d2.pid = ENT_PID_BOTTOM;
-                decay_two_body(context, state, &d1, &d2);
-
-                memcpy(state, &d1, sizeof d1);
-
-                d1.pid = ENT_PID_POSITRON;
-                decay_two_body(context, state, &d1, &d2);
-                d2.pid = ENT_PID_NU_BAR_E;
-
-                memcpy(state, &d1, sizeof d1);
-                memcpy(products, &d2, sizeof d2);
-        } else {
-                struct ent_state m1, d2;
-
-                m1.pid = ENT_PID_W_PLUS;
-                d2.pid = ENT_PID_NU_BAR_E;
-                undecay_two_body(context, state, &m1, &d2);
-                memcpy(state, &m1, sizeof m1);
-
-                m1.pid = ENT_PID_TOP;
-                d2.pid = ENT_PID_BOTTOM;
-                undecay_two_body(context, state, &m1, &d2);
-                memcpy(state, &m1, sizeof m1);
-
-                memcpy(products, &d2, sizeof d2);
-        }
-
         return ENT_RETURN_SUCCESS;
-        */
 }
 
 /* API interface for a Monte-Carlo tranport. */
