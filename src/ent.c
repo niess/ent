@@ -2700,8 +2700,10 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                 /* Secondly, let us interpolate the CDF over the bracketing
                  * interval.
                  */
-                const double f0 = (pdf0[i0] * (1. - he) + pdf1[i0] * he) * y0;
-                const double f1 = (pdf0[i1] * (1. - he) + pdf1[i1] * he) * y1;
+                const double pdfy0 = pdf0[i0] * (1. - he) + pdf1[i0] * he;
+                const double f0 = pdfy0 * y0;
+                const double pdfy1 = pdf0[i1] * (1. - he) + pdf1[i1] * he;
+                const double f1 = pdfy1 * y1;
 
                 const double r0 = cdf0[i0] * (1. - he) + cdf1[i0] * he;
                 const double r1 = cdf0[i1] * (1. - he) + cdf1[i1] * he;
@@ -2727,6 +2729,11 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                 if (dcs_dis(physics, neutrino->pid, neutrino->energy, Z, A,
                     process, 0.5 * (xmin + xmax), y) <= 0.) continue;
 
+                /* Interpolate the PDF as y. */
+                const double pdfy = pdfy0 * (1. - hy) + pdfy1 * hy;
+                if (pdfy <= 0.) continue;
+
+                /* Forward the selected y value. */
                 *y_ = y;
 
                 /* Sample x using an envelope. */
@@ -2740,9 +2747,11 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                 const double bmax = pow(1. + xmax / x0, 1. - beta);
 
                 /* Safeguard in case of bad estimate of [xmin, xmax] range. */
+                const int mintrials = 100;
+                const int maxtrials = 1000;
                 int trials = (int)(100 * ratio);
-                if (trials < 100) trials = 100;
-                else if (trials > 1000) trials = 1000;
+                if (trials < mintrials) trials = mintrials;
+                else if (trials > maxtrials) trials = maxtrials;
 
                 /* Rejection sampling of x*/
                 for (; trials > 0; trials--) {
@@ -2760,7 +2769,7 @@ static enum ent_return transport_sample_yQ2(struct ent_physics * physics,
                         const double dcs1 = dcs_dis(physics, neutrino->pid,
                             neutrino->energy, Z, A, process, x, y);
 
-                        const double pdf1 = dcs1 / cs1;
+                        const double pdf1 = dcs1 / (cs1 * pdfy);
 
                         if (context->random(context) * ratio <= pdf1 / pdf0) {
                                 *Q2 = 2 * ENT_MASS_NUCLEON * neutrino->energy *
@@ -3490,6 +3499,10 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
 {
         /* Process the corresponding vertex. */
         if (proget < PROGET_N_DIS) {
+                /* Backup the initial neutrino state. */
+                struct ent_state neutrino;
+                memcpy(&neutrino, state, sizeof(neutrino));
+
                 double y, Q2;
                 enum ent_return rc = transport_sample_yQ2(
                     physics, context, state, proget, &y, &Q2);
@@ -3505,27 +3518,9 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
                         return ENT_RETURN_SUCCESS;
                 }
 
-                /* Backup the initial neutrino state. */
-                struct ent_state neutrino;
-                memcpy(&neutrino, state, sizeof(neutrino));
-
                 if ((proget >= 8) || ((proget % 2) == 0)) {
                         /* Charged current event: update the lepton PID. */
-                        if (state->pid == ENT_PID_NU_E) {
-                                state->pid = ENT_PID_ELECTRON;
-                        } else if (state->pid == ENT_PID_NU_BAR_E) {
-                                state->pid = ENT_PID_POSITRON;
-                        } else if (state->pid == ENT_PID_NU_MU) {
-                                state->pid = ENT_PID_MUON;
-                        } else if (state->pid == ENT_PID_NU_BAR_MU) {
-                                state->pid = ENT_PID_MUON_BAR;
-                        } else if (state->pid == ENT_PID_NU_TAU) {
-                                state->pid = ENT_PID_TAU;
-                        } else if (state->pid == ENT_PID_NU_BAR_TAU) {
-                                state->pid = ENT_PID_TAU_BAR;
-                        } else {
-                                return ENT_RETURN_DOMAIN_ERROR;
-                        }
+                        state->pid += (state->pid > 0) ? -1 : 1;
                 }
 
                 double pmu;
@@ -3533,23 +3528,28 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
                         /* Compute the product lepton's energy and its
                          * direction.
                          */
-                        const double mu = rest_mass(state->pid);
-                        const double Emu = state->energy * (1. - y);
-                        pmu = (mu > 0.) ? sqrt(Emu * (Emu + 2. * mu)) : Emu;
-                        /* XXX total or kinetic energy? */
-                        double ct = (mu > 0.) ?
-                            (Emu - 0.5 * (Q2 + mu * mu) / state->energy) /
-                                pmu :
-                            1. - 0.5 * Q2 / (state->energy * Emu);
-                        if (ct > 1.)
-                                ct = 1.;
-                        else if (ct < -1.)
-                                ct = -1.;
+                        const double Emu = neutrino.energy * (1. - y);
+                        state->energy = Emu;
+
+                        double ct;
+                        if (proget % 2) {
+                                /* NC event. */
+                                pmu = Emu;
+                                ct = 1. - 0.5 * Q2 / (neutrino.energy * Emu);
+                        } else {
+                                /* CC event. */
+                                const double mu = rest_mass(state->pid);
+                                pmu = sqrt(Emu * (Emu + 2. * mu));
+                                /* XXX total or kinetic energy? */
+                                ct = (Emu - 0.5 * (Q2 + mu * mu) /
+                                    neutrino.energy) / pmu;
+                        }
+                        if (ct > 1.) ct = 1.;
+                        else if (ct < -1.) ct = -1.;
                         const double phi = 2. * M_PI * context->random(context);
                         const double cp = cos(phi);
                         const double sp = sin(phi);
                         transport_rotate(state->direction, ct, cp, sp);
-                        state->energy = Emu;
                 } else {
                         /* This is a total conversion. Let's update the
                          * energy.
@@ -3584,9 +3584,9 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
                         }
                         if (d > 0.) {
                                 d = 1. / sqrt(d);
-                        }
-                        for (i = 0; i < 3; i++) {
-                                struck_quark.direction[i] *= d;
+                                for (i = 0; i < 3; i++) {
+                                        struck_quark.direction[i] *= d;
+                                }
                         }
 
                         /* Update energies. */
@@ -3652,6 +3652,12 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                 return ENT_RETURN_SUCCESS;
         }
         if (proget < PROGET_N_DIS) {
+                /* Backup the initial state. */
+                struct ent_state lepton;
+                if (products != NULL) {
+                        memcpy(&lepton, state, sizeof(lepton));
+                }
+
                 /* Sample the energy loss. */
                 enum ent_return rc;
                 double Enu, Q2;
@@ -3668,12 +3674,6 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                          */
                 }
                 if (rc != ENT_RETURN_SUCCESS) return rc;
-
-                /* Backup the initial state. */
-                struct ent_state lepton;
-                if (products != NULL) {
-                        memcpy(&lepton, state, sizeof(lepton));
-                }
 
                 /* Update the MC state. */
                 double pmu;
@@ -3697,8 +3697,8 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                         transport_rotate(state->direction, ct, cp, sp);
                 } else {
                         /* Neutral current event. */
-                        pmu = state->energy;
                         state->energy = Enu;
+                        pmu = lepton.energy;
                         double ct = 1. - 0.5 * Q2 / (Enu * pmu);
                         if (ct < -1.) ct = -1.;
                         const double phi = 2. * M_PI * context->random(context);
@@ -3710,6 +3710,7 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                 /* Process collision side products. */
                 if (products != NULL) {
                         struct ent_state struck_quark = { 0. };
+                        struck_quark.energy = state->energy - lepton.energy;
                         struck_quark.weight = state->weight;
                         memcpy(struck_quark.position, state->position,
                             sizeof struck_quark.position);
@@ -3734,13 +3735,10 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                         }
                         if (d > 0.) {
                                 d = 1. / sqrt(d);
+                                for (i = 0; i < 3; i++) {
+                                        struck_quark.direction[i] *= d;
+                                }
                         }
-                        for (i = 0; i < 3; i++) {
-                                struck_quark.direction[i] *= d;
-                        }
-
-                        /* Set the energy. */
-                        products->energy = state->energy - lepton.energy;
 
                         /* Process decay products. */
                         process_dis_products(context, state->pid, &struck_quark,
@@ -3869,12 +3867,13 @@ static enum ent_return transport_vertex_backward_top_decay(
 
         /* Set the neutrino state. */
         state->pid = ancestor;
-        const double Emu = Enu - t_quark.energy;
         state->energy = Enu;
         state->weight = t_quark.weight;
+        memcpy(state->direction, &t_quark.direction, sizeof state->direction);
 
         /* Randomise the neutrino direction. */
         const double mu = rest_mass(abs(ancestor) - 1);
+        const double Emu = Enu - t_quark.energy;
         const double pmu = sqrt(Emu * (Emu + 2. * mu));
         double ct = (Emu - 0.5 * (Q2 + mu * mu) / Enu) / pmu;
         ct = (Enu - pmu * ct) / t_quark.energy; /* lepton to hadron angle. */
@@ -3885,7 +3884,6 @@ static enum ent_return transport_vertex_backward_top_decay(
         const double phi = 2. * M_PI * context->random(context);
         const double cp = cos(phi);
         const double sp = sin(phi);
-        memcpy(state->direction, &t_quark.direction, sizeof state->direction);
         transport_rotate(state->direction, ct, cp, sp);
 
         /* Copy back the products. */
