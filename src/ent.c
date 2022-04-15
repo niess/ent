@@ -3517,38 +3517,32 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
                         state->pid += (state->pid > 0) ? -1 : 1;
                 }
 
-                double pmu;
+                const double mu = rest_mass(state->pid);
                 if (y < 1.) {
                         /* Compute the product lepton's energy and its
                          * direction.
                          */
                         const double Emu = neutrino.energy * (1. - y);
-                        state->energy = Emu;
+                        state->energy = (Emu > mu) ? Emu : mu;
 
-                        double ct;
-                        if (proget % 2) {
-                                /* NC event. */
-                                pmu = Emu;
-                                ct = 1. - 0.5 * Q2 / (neutrino.energy * Emu);
-                        } else {
-                                /* CC event. */
-                                const double mu = rest_mass(state->pid);
-                                pmu = sqrt(Emu * (Emu + 2. * mu));
-                                /* XXX total or kinetic energy? */
-                                ct = (Emu - 0.5 * (Q2 + mu * mu) /
-                                    neutrino.energy) / pmu;
+                        /* Always approximate out-going lepton as mass-less
+                         * when computing the scattering angle.
+                         */
+                        double
+                            ct = 1. - 0.5 * Q2 / (neutrino.energy * Emu);
+                        if (ct < 1.) {
+                                if (ct < -1.) ct = -1.;
+                                const double phi = 2. * M_PI *
+                                     context->random(context);
+                                const double cp = cos(phi);
+                                const double sp = sin(phi);
+                                transport_rotate(state->direction, ct, cp, sp);
                         }
-                        if (ct > 1.) ct = 1.;
-                        else if (ct < -1.) ct = -1.;
-                        const double phi = 2. * M_PI * context->random(context);
-                        const double cp = cos(phi);
-                        const double sp = sin(phi);
-                        transport_rotate(state->direction, ct, cp, sp);
                 } else {
                         /* This is a total conversion. Let's update the
                          * energy.
                          */
-                        pmu = state->energy = 0.;
+                        state->energy = mu;
                 }
 
                 /* Copy back the product data if requested. */
@@ -3567,6 +3561,9 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
 
                         /* Compute the struck quark final direction
                          * from momentum conservation. */
+                        const double pmu = (state->energy > mu) ?
+                            sqrt(state->energy * state->energy - mu * mu) :
+                            0.;
                         int i;
                         double d = 0.;
                         for (i = 0; i < 3; i++) {
@@ -3670,31 +3667,14 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                 if (rc != ENT_RETURN_SUCCESS) return rc;
 
                 /* Update the MC state. */
-                double pmu;
                 if ((proget >= 8) || ((proget % 2) == 0)) {
                         /* Charged current event. */
-                        const double mu = rest_mass(state->pid);
-                        const double Emu = state->energy;
-                        state->energy = Enu;
                         state->pid += (state->pid > 0) ? 1 : -1;
-
-                        /* Compute the mother's neutrino direction. */
-                        pmu = sqrt(Emu * (Emu + 2. * mu));
-                        /* XXX total or kinetic energy? */
-                        double ct = (Emu - 0.5 * (Q2 + mu * mu) / Enu) / pmu;
-                        if (ct > 1.)
-                                ct = 1.;
-                        else if (ct < -1.)
-                                ct = -1.;
-                        const double phi = 2. * M_PI * context->random(context);
-                        const double cp = cos(phi);
-                        const double sp = sin(phi);
-                        transport_rotate(state->direction, ct, cp, sp);
-                } else {
-                        /* Neutral current event. */
-                        state->energy = Enu;
-                        pmu = lepton.energy;
-                        double ct = 1. - 0.5 * Q2 / (Enu * pmu);
+                }
+                const double Emu = state->energy;
+                state->energy = Enu;
+                double ct = 1. - 0.5 * Q2 / (Enu * Emu);
+                if (ct < 1.) {
                         if (ct < -1.) ct = -1.;
                         const double phi = 2. * M_PI * context->random(context);
                         const double cp = cos(phi);
@@ -3719,6 +3699,9 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                         /* Compute the struck quark final direction from
                          * momentum conservation.
                          */
+                        const double mu = rest_mass(state->pid);
+                        const double pmu = (Emu > mu) ?
+                            sqrt(Emu * Emu - mu * mu) : 0.;
                         int i;
                         double d = 0.;
                         for (i = 0; i < 3; i++) {
@@ -3867,28 +3850,24 @@ static enum ent_return transport_vertex_backward_top_decay(
         memcpy(state->direction, &t_quark.direction, sizeof state->direction);
 
         /* Randomise the neutrino direction. */
-        const double mu = rest_mass(abs(ancestor) - 1);
         const double Emu = Enu - t_quark.energy;
-        const double pmu = sqrt(Emu * Emu - mu * mu);
-        const double mt = rest_mass(t_quark.pid);
-        const double pt = sqrt(t_quark.energy * t_quark.energy - mt * mt);
-        double ct = (Emu - 0.5 * (Q2 + mu * mu) / Enu) / pmu;
-        ct = (Enu - pmu * ct) / pt; /* lepton to hadron angle. */
-        if (ct > 1.)
-                ct = 1.;
-        else if (ct < -1.)
-                ct = -1.;
-        const double phi = 2. * M_PI * context->random(context);
-        const double cp = cos(phi);
-        const double sp = sin(phi);
-        transport_rotate(state->direction, ct, cp, sp);
-        // XXX No effect ?
+        const double ph = sqrt((Enu - Emu) * (Enu - Emu) + Q2);
+        double ct = 1. - 0.5 * Q2 / (Enu * Emu);
+        ct = (Enu - Emu * ct) / ph; /* lepton to hadron angle. */
+        if (ct < 1.) {
+                if (ct < -1.) ct = -1.;
+                const double phi = 2. * M_PI * context->random(context);
+                const double cp = cos(phi);
+                const double sp = sin(phi);
+                transport_rotate(state->direction, ct, cp, sp);
+        }
 
         /* Copy back the products. */
         if (products != NULL) {
                 memset(products, 0x0, sizeof *products);
                 products->pid = (ancestor > 0) ? ancestor - 1 : ancestor + 1;
-                products->energy = Emu;
+                const double mu = rest_mass(products->pid);
+                products->energy = (Emu > mu) ? Emu : mu;
                 products->weight = state->weight;
                 memcpy(products->position, state->position,
                     sizeof(products->position));
