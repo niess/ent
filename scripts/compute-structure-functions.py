@@ -151,7 +151,7 @@ class StructureFunctions(NamedTuple):
             c = contrib
 
         # BMC algorithm to be used. For BGR18, the top DCS is awkward at low
-        # energy. It requires a a specific algorithm in backward mode.
+        # energy. It requires a specific algorithm in backward mode.
         if ("BGR18" in args.o) and (c == Contribution.TOP):
             mode = 1
         else:
@@ -234,7 +234,7 @@ def compute_sf():
     apfel.SetReplica(pdfmember)
 
     apfel.SetMassScheme(args.scheme)
-    if args.scheme == "ZM-VFNS":
+    if "CMS11" in args.o:
         apfel.SetPoleMasses(pdf.quarkMass(4), pdf.quarkMass(5),
                             pdf.quarkMass(5) + 0.1)
     else:

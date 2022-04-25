@@ -1110,6 +1110,11 @@ static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
     double energy, double Z, double A, enum ent_process process, double x,
     double y)
 {
+        if (process == ENT_PROCESS_DIS_CC_TOP) {
+                /* Check production threshold. */
+                if (y * energy <= rest_mass(ENT_PID_TOP)) return 0.;
+        }
+
         /* Compute the SFs. */
         const double Q2 = 2. * x * y * ENT_MASS_NUCLEON * energy;
         double sf[3];
@@ -1690,7 +1695,7 @@ static double dcs_integrate(struct ent_physics * physics,
 
                 double ymin, ymax;
                 dis_get_support_y(physics, proget, energy, 1, &ymin, &ymax);
-                if (ymin >= ymax) {
+                if (ymin / ymax - 1. >= -FLT_EPSILON) {
                         memset(pdf, 0x0, DIS_Y_N * sizeof(*pdf));
                         memset(cdf, 0x0, DIS_Y_N * sizeof(*pdf));
                         return 0.;
@@ -2876,10 +2881,11 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
 
                 /* Check consistency of x support. */
                 dis_get_support_x(physics, proget, *E, y, &xmin, &xmax, NULL);
-                if (xmin >= xmax) continue;
+                if (xmin / xmax - 1. >= -FLT_EPSILON) continue;
 
-                if (dcs_dis(physics, pid, *E, Z, A, process,
-                    0.5 * (xmin + xmax), y) <= 0.) continue;
+                const double xm = sqrt(xmin * xmax);
+                if (dcs_dis(physics, pid, *E, Z, A, process, xm, y) <= 0.)
+                        continue;
 
                 break;
         }
@@ -2945,8 +2951,12 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
                         if (rx > cdf[i2]) i0 = i2;
                         else i1 = i2;
                 }
-                const double ax = 0.5 * (pdf[i1] - pdf[i0]);
-                const double bx = pdf[i0];
+                if (i1 > nx - 2) {
+                        i0 = nx - 3;
+                        i1 = nx - 2;
+                }
+                const double ax = 0.5 * (pdf[i1 + 1] - pdf[i0 + 1]);
+                const double bx = pdf[i0 + 1];
                 const double cx = -(rx - cdf[i0]) / dlx;
                 double dx = bx * bx - 4 * ax * cx;
                 dx = (dx < 0.) ? 0. : sqrt(dx);
@@ -4232,8 +4242,16 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
          */
         double *cs0, *cs1;
         double p1, p2;
+        const double Emin = 1E+04; /* At low energy the DIS cross-section
+                                    * might be null for CC(top), in which case
+                                    * the following BMC procedure would fail.
+                                    * Thus, let us freeze the final energy
+                                    * whenever this could happen.
+                                    */
+        const double Ef =
+            (daughter->energy > Emin) ? daughter->energy: Emin;
         const int mode = cross_section_prepare(
-            physics->cs_t, daughter->energy, &cs0, &cs1, &p1, &p2);
+            physics->cs_t, Ef, &cs0, &cs1, &p1, &p2);
 
         /* Check the valid backward processes and compute their a priori
          * probabilities of occurence.
