@@ -66,10 +66,10 @@
 /* Energy range for tabulations. */
 #define ENERGY_MIN 1E+02
 #define ENERGY_MAX 1E+12
-#define ENERGY_N 201
+#define ENERGY_N 301
 
 /* Sampling for the tabulations of DIS cumulative cross-sections. */
-#define DIS_Y_N 101
+#define DIS_Y_N 301
 
 /* Exponent for DIS bias model, w.r.t. x. */
 #define DIS_X_EXPONENT 2.5
@@ -1111,8 +1111,13 @@ static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
     double y)
 {
         if (process == ENT_PROCESS_DIS_CC_TOP) {
-                /* Check production threshold. */
-                if (y * energy <= rest_mass(ENT_PID_TOP)) return 0.;
+                /* Check kinematic threshold. */
+                if (y <= 0.) return 0.;
+
+                const double mt = rest_mass(ENT_PID_TOP);
+                const double xmax =
+                    1. - mt * mt / (2 * ENT_MASS_NUCLEON * energy * y);
+                if (x >= xmax) return 0.;
         }
 
         /* Compute the SFs. */
@@ -1246,6 +1251,16 @@ static double dcs_compute(struct ent_physics * physics, enum ent_pid projectile,
         }
 }
 
+/* Kinematic limit for top prodcution in DIS. */
+static void dis_top_clip_x(double energy, double y, double * xmax)
+{
+        const double mt = rest_mass(ENT_PID_TOP);
+        double xk =
+            1. - mt * mt / (2 * ENT_MASS_NUCLEON * energy * y);
+        if (xk < 0.) xk = 0.;
+        if (*xmax > xk) *xmax = xk;
+}
+
 /* Map DIS DDCS support as x, for fix y. */
 static void dis_compute_support_x(struct ent_physics * physics, 
     enum ent_pid projectile, double energy, double Z, double A,
@@ -1258,6 +1273,11 @@ static void dis_compute_support_x(struct ent_physics * physics,
         double xmax = physics->dis_Q2max /
             (2 * ENT_MASS_NUCLEON * energy * y);
         if (xmax > 1.) xmax = 1.;
+
+        if (process == ENT_PROCESS_DIS_CC_TOP) {
+                dis_top_clip_x(energy, y, &xmax);
+        }
+
         if (xmin >= xmax) {
                 xlim[0] = xmax;
                 xlim[1] = xmax;
@@ -1380,6 +1400,12 @@ static void dis_get_support_x(struct ent_physics * physics,
                     (2 * ENT_MASS_NUCLEON * energy * y);
                 if (*xmax > 1.) *xmax = 1.;
 
+                if (proget >= 8) {
+                        /* Kinematic threshold. */
+                        dis_top_clip_x(energy, y, xmax);
+                }
+                if (*xmin >= *xmax) *xmin = *xmax;
+
                 if (pdf_ratio) {
                         /* However, freeze PDF ratio. */
                         const double * const xlim = physics->dis_xlim +
@@ -1410,11 +1436,25 @@ static void dis_get_support_x(struct ent_physics * physics,
         *xmax = x00[1] * (1. - he) * (1. - hy) + x01[1] * (1. - he) * hy +
                 x10[1] * he * (1. - hy) + x11[1] * he * hy;
 
+        if (proget >= 8) {
+                /* Kinematic threshold. */
+                dis_top_clip_x(energy, y, xmax);
+        }
+        if (*xmin >= *xmax) *xmin = *xmax;
+
         if (pdf_ratio != NULL) {
                 *pdf_ratio = x00[2] * (1. - he) * (1. - hy) +
                     x01[2] * (1. - he) * hy + x10[2] * he * (1. - hy) +
                     x11[2] * he * hy;
         }
+}
+
+/* Kinematic limit for top production. */
+static void dis_top_clip_y(double energy, double * ymin)
+{
+        const double mt = rest_mass(ENT_PID_TOP);
+        const double yk = mt * mt / (2 * ENT_MASS_NUCLEON * energy);
+        if (*ymin < yk) *ymin = yk;
 }
 
 /* Refine DIS DCS support, in forward case. */
@@ -1431,9 +1471,7 @@ static void dis_compute_support_y_forward(struct ent_physics * physics,
              (2 * ENT_MASS_NUCLEON * energy);
         const double dly = -log(ymin) / (DIS_Y_N - 1);
 
-        /* Find the lower bound of the support. First let us find an initial
-         * bracketing using an exponential search.
-         */
+        /* Find the lower bound of the support. */
         double y0, y1, tol;
         enum proget_index proget;
         const enum ent_pid target = (Z > 0.) ? ENT_PID_PROTON : ENT_PID_NEUTRON;
@@ -1464,6 +1502,9 @@ static void dis_compute_support_y_forward(struct ent_physics * physics,
                 } else {
                         y0 = y2;
                 }
+        }
+        if (process == ENT_PROCESS_DIS_CC_TOP) {
+                dis_top_clip_y(energy, &y1);
         }
         ylim[0] = y1;
 
@@ -1497,6 +1538,64 @@ static void dis_compute_support_y_forward(struct ent_physics * physics,
         ylim[1] = y0;
 }
 
+/* Build the interpolation or extrapolation factors. */
+static int cross_section_prepare(double * cs, double energy, double ** cs0,
+    double ** cs1, double * p1, double * p2)
+{
+        int mode;
+        if (energy < ENERGY_MIN) {
+                /* Log extrapolation model below Emin. */
+                mode = 1;
+                *cs0 = cs;
+                *cs1 = cs + PROGET_N - 1;
+                *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
+                *p2 = energy / ENERGY_MIN;
+        } else if (energy >= ENERGY_MAX) {
+                /* Log extrapolation model above Emax. */
+                mode = 2;
+                *cs0 = cs + (ENERGY_N - 2) * (PROGET_N - 1);
+                *cs1 = cs + (ENERGY_N - 1) * (PROGET_N - 1);
+                *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
+                *p2 = energy / ENERGY_MAX;
+        } else {
+                /* Interpolation model. */
+                mode = 0;
+                const double dle =
+                    log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
+                *p1 = log(energy / ENERGY_MIN) / dle;
+                const int i0 = (int)(*p1);
+                *p1 -= i0;
+                *cs0 = cs + i0 * (PROGET_N - 1);
+                *cs1 = cs + (i0 + 1) * (PROGET_N - 1);
+                *p2 = 0.;
+        }
+        return mode;
+}
+
+/* Low level routine for computing a specific cross-section by interpolation
+ * or extrapolation.
+ */
+static double cross_section_compute(
+    int mode, int proget, double * cs0, double * cs1, double p1, double p2)
+{
+        if (mode == 0) {
+                /* interpolation case. */
+                return cs0[proget] * (1. - p1) + cs1[proget] * p1;
+        } else if (mode == 1) {
+                /* Extrapolation case (below). */
+                if (cs0[proget] * cs1[proget] <= 0.) {
+                        return 0.;
+                } else {
+                        const double a = log(cs1[proget] / cs0[proget]) * p1;
+                        return cs0[proget] * pow(p2, a);
+                }
+        } else {
+                /* Extrapolation case (above). */
+                const double a = log(cs1[proget] / cs0[proget]) * p1;
+                return cs1[proget] * pow(p2, a);
+        }
+}
+
 /* Map DIS DCS support as Ef, in backward case. */
 static void dis_compute_support_y_backward(struct ent_physics * physics, 
     enum ent_pid projectile, double energy, double Z, double A,
@@ -1506,9 +1605,16 @@ static void dis_compute_support_y_backward(struct ent_physics * physics,
 
         double ymin;
         if (mode) {
-                ymin = physics->dis_Q2min /
-                    (physics->dis_Q2min + 2 * ENT_MASS_NUCLEON * energy);
+                double Q2min;
+                if (process == ENT_PROCESS_DIS_CC_TOP) {
+                        const double mt = rest_mass(ENT_PID_TOP);
+                        Q2min = mt * mt;
+                } else {
+                        Q2min = physics->dis_Q2min;
+                }
+                ymin = Q2min / (Q2min + 2 * ENT_MASS_NUCLEON * energy);
         } else {
+                /* XXX Improve this? */
                 ymin = physics->dis_Q2min /
                     (2 * ENT_MASS_NUCLEON * energy * HADRON_MAX_RATIO);
         }
@@ -1525,13 +1631,16 @@ static void dis_compute_support_y_backward(struct ent_physics * physics,
         r = 2.;
         y0 = y1 = ymin;
         for (;;) {
-                double xmin, xmax;
                 if (y1 < 1.) {
                         const double Ei = mode ?
                             energy / (1. - y1) : energy / y1;
-                        dis_get_support_x(physics, proget, Ei, y1, &xmin,
-                            &xmax, NULL);
-                        if (xmin < xmax) break;
+                        double *csl, *csh;
+                        double pl, ph;
+                        const int m = cross_section_prepare(
+                            physics->cs_k, Ei, &csl, &csh, &pl, &ph);
+                        const double cs = cross_section_compute(
+                            m, proget, csl, csh, pl, ph);
+                        if (cs > 0.) break;
                 }
                 y0 = y1;
                 y1 *= r;
@@ -1553,16 +1662,20 @@ static void dis_compute_support_y_backward(struct ent_physics * physics,
                 if (tol > 1E-06) tol = 1E-06;
                 while (y1 - y0 > tol) {
                         const double y2 = 0.5 * (y0 + y1);
-                        double xmin, xmax;
+                        double cs;
                         if (y2 < 1.) {
                                 const double Ei = mode ?
                                     energy / (1. - y2) : energy / y2;
-                                dis_get_support_x(physics, proget, Ei, y2,
-                                    &xmin, &xmax, NULL);
+                                double *csl, *csh;
+                                double pl, ph;
+                                const int m = cross_section_prepare(
+                                    physics->cs_k, Ei, &csl, &csh, &pl, &ph);
+                                cs = cross_section_compute(
+                                    m, proget, csl, csh, pl, ph);
                         } else {
-                                xmin = xmax = 1.;
+                                cs = 0.;
                         }
-                        if (xmin < xmax) {
+                        if (cs > 0.) {
                                 y1 = y2;
                         } else {
                                 y0 = y2;
@@ -1575,13 +1688,16 @@ static void dis_compute_support_y_backward(struct ent_physics * physics,
         r = 2.;
         y0 = y1 = ymax;
         for (;;) {
-                double xmin, xmax;
                 if (y0 < 1.) {
                         const double Ei = mode ?
                             energy / (1. - y0) : energy / y0;
-                        dis_get_support_x(physics, proget, Ei, y0, &xmin,
-                            &xmax, NULL);
-                        if (xmin < xmax) break;
+                        double *csl, *csh;
+                        double pl, ph;
+                        const int m = cross_section_prepare(
+                            physics->cs_k, Ei, &csl, &csh, &pl, &ph);
+                        const double cs = cross_section_compute(
+                            m, proget, csl, csh, pl, ph);
+                        if (cs > 0.) break;
                 }
                 y1 = y0;
                 y0 /= r;
@@ -1597,16 +1713,20 @@ static void dis_compute_support_y_backward(struct ent_physics * physics,
                 if (tol > 1E-06) tol = 1E-06;
                 while (y1 - y0 > tol) {
                         const double y2 = 0.5 * (y0 + y1);
-                        double xmin, xmax;
+                        double cs;
                         if (y2 < 1.) {
                                 const double Ei = mode ?
                                     energy / (1. - y2) : energy / y2;
-                                dis_get_support_x(physics, proget, Ei, y2,
-                                    &xmin, &xmax, NULL);
+                                double *csl, *csh;
+                                double pl, ph;
+                                const int m = cross_section_prepare(
+                                    physics->cs_k, Ei, &csl, &csh, &pl, &ph);
+                                cs = cross_section_compute(
+                                    m, proget, csl, csh, pl, ph);
                         } else {
-                                xmin = xmax = 1.;
+                                cs = 0.;
                         }
-                        if (xmin < xmax) {
+                        if (cs > 0.) {
                                 y0 = y2;
                         } else {
                                 y1 = y2;
@@ -1632,10 +1752,16 @@ static void dis_get_support_y(struct ent_physics * physics,
                 if (mode == 1) {
                         *ymin = physics->dis_Q2min /
                             (2 * ENT_MASS_NUCLEON * energy );
+                        if (proget >= 8) dis_top_clip_y(energy, ymin);
                 } else if (mode == 0) {
-                        *ymin = physics->dis_Q2min /
-                            (physics->dis_Q2min +
-                             2 * ENT_MASS_NUCLEON * energy);
+                        double Q2min;
+                        if (proget >= 8) {
+                                const double mt = rest_mass(ENT_PID_TOP);
+                                Q2min = mt * mt;
+                        } else {
+                                Q2min = physics->dis_Q2min;
+                        }
+                        *ymin = Q2min / (Q2min + 2 * ENT_MASS_NUCLEON * energy);
                 } else {
                         *ymin = physics->dis_Q2min /
                             (2 * ENT_MASS_NUCLEON * energy * HADRON_MAX_RATIO);
@@ -1659,6 +1785,27 @@ static void dis_get_support_y(struct ent_physics * physics,
 
         *ymin = y0[0] * (1. - he) + y1[0] * he;
         *ymax = y0[1] * (1. - he) + y1[1] * he;
+
+        if (mode == 1) {
+                if (proget < 8) {
+                        const double yk = physics->dis_Q2min /
+                            (2 * ENT_MASS_NUCLEON * energy);
+                        if (*ymin < yk) *ymin = yk;
+                } else {
+                        dis_top_clip_y(energy, ymin);
+                }
+        } else if (mode == 0) {
+                double Q2min;
+                if (proget < 8) {
+                        Q2min = physics->dis_Q2min;
+                } else {
+                        const double mt = rest_mass(ENT_PID_TOP);
+                        Q2min = mt * mt;
+                }
+                const double yk =
+                    Q2min / (Q2min + 2 * ENT_MASS_NUCLEON * energy);
+                if (*ymin < yk) *ymin = yk;
+        }
 
 #undef HADRON_MAX_RATIO
 }
@@ -1802,7 +1949,7 @@ static double dcs_integrate(struct ent_physics * physics,
 
                 return cs;
         } else {
-                /* Scattering on an atomic electron. */
+                /* Scattering off an atomic electron. */
                 double mu = ENT_MASS_ELECTRON;
                 if (process == ENT_PROCESS_INVERSE_MUON)
                         mu = ENT_MASS_MUON;
@@ -1937,21 +2084,6 @@ static void physics_tabulate(struct ent_physics * physics)
                 }
         }
 
-        /* Tabulate DIS DCS supports in backward mode. */
-        for (i = 0; i < PROGET_N_DIS; i++) {
-                double * ylim_b = physics->dis_ylim_b + 2 * i * ENERGY_N;
-                double * ylim_h = physics->dis_ylim_h + 2 * i * ENERGY_N;
-
-                int j;
-                for (j = 0; j < ENERGY_N; j++, ylim_b += 2, ylim_h += 2) {
-                        const double energy = ENERGY_MIN * exp(j * dlE);
-                        dis_compute_support_y_backward(physics, projectile[i],
-                            energy, Z[i], 1., process[i], 1, ylim_b);
-                        dis_compute_support_y_backward(physics, projectile[i],
-                            energy, Z[i], 1., process[i], 0, ylim_h);
-                }
-        }
-
         /* Tabulate cross-sections. */
         double * cs_k;
         const int np = PROGET_N - 1;
@@ -1975,6 +2107,21 @@ static void physics_tabulate(struct ent_physics * physics)
                         /* Integrate. */
                         cs_k[j] = dcs_integrate(physics, projectile[j],
                             energy, Z[j], 1., process[j], pdf, cdf, xlim);
+                }
+        }
+
+        /* Tabulate DIS DCS supports in backward mode. */
+        for (i = 0; i < PROGET_N_DIS; i++) {
+                double * ylim_b = physics->dis_ylim_b + 2 * i * ENERGY_N;
+                double * ylim_h = physics->dis_ylim_h + 2 * i * ENERGY_N;
+
+                int j;
+                for (j = 0; j < ENERGY_N; j++, ylim_b += 2, ylim_h += 2) {
+                        const double energy = ENERGY_MIN * exp(j * dlE);
+                        dis_compute_support_y_backward(physics, projectile[i],
+                            energy, Z[i], 1., process[i], 1, ylim_b);
+                        dis_compute_support_y_backward(physics, projectile[i],
+                            energy, Z[i], 1., process[i], 0, ylim_h);
                 }
         }
 }
@@ -2133,64 +2280,6 @@ void ent_physics_destroy(struct ent_physics ** physics)
 
         free(*physics);
         *physics = NULL;
-}
-
-/* Build the interpolation or extrapolation factors. */
-static int cross_section_prepare(double * cs, double energy, double ** cs0,
-    double ** cs1, double * p1, double * p2)
-{
-        int mode;
-        if (energy < ENERGY_MIN) {
-                /* Log extrapolation model below Emin. */
-                mode = 1;
-                *cs0 = cs;
-                *cs1 = cs + PROGET_N - 1;
-                *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
-                *p2 = energy / ENERGY_MIN;
-        } else if (energy >= ENERGY_MAX) {
-                /* Log extrapolation model above Emax. */
-                mode = 2;
-                *cs0 = cs + (ENERGY_N - 2) * (PROGET_N - 1);
-                *cs1 = cs + (ENERGY_N - 1) * (PROGET_N - 1);
-                *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
-                *p2 = energy / ENERGY_MAX;
-        } else {
-                /* Interpolation model. */
-                mode = 0;
-                const double dle =
-                    log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
-                *p1 = log(energy / ENERGY_MIN) / dle;
-                const int i0 = (int)(*p1);
-                *p1 -= i0;
-                *cs0 = cs + i0 * (PROGET_N - 1);
-                *cs1 = cs + (i0 + 1) * (PROGET_N - 1);
-                *p2 = 0.;
-        }
-        return mode;
-}
-
-/* Low level routine for computing a specific cross-section by interpolation
- * or extrapolation.
- */
-static double cross_section_compute(
-    int mode, int proget, double * cs0, double * cs1, double p1, double p2)
-{
-        if (mode == 0) {
-                /* interpolation case. */
-                return cs0[proget] * (1. - p1) + cs1[proget] * p1;
-        } else if (mode == 1) {
-                /* Extrapolation case (below). */
-                if (cs0[proget] * cs1[proget] <= 0.) {
-                        return 0.;
-                } else {
-                        const double a = log(cs1[proget] / cs0[proget]) * p1;
-                        return cs0[proget] * pow(p2, a);
-                }
-        } else {
-                /* Extrapolation case (above). */
-                const double a = log(cs1[proget] / cs0[proget]) * p1;
-                return cs1[proget] * pow(p2, a);
-        }
 }
 
 static enum ent_return transport_cross_section(struct ent_physics * physics,
@@ -2881,9 +2970,11 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
 
                 /* Check consistency of x support. */
                 dis_get_support_x(physics, proget, *E, y, &xmin, &xmax, NULL);
-                if (xmin / xmax - 1. >= -FLT_EPSILON) continue;
+                if ((xmax <= 0.) || (xmin / xmax - 1. >= -FLT_EPSILON)) {
+                        continue;
+                }
 
-                const double xm = sqrt(xmin * xmax);
+                const double xm = 0.5 * (xmin + xmax);
                 if (dcs_dis(physics, pid, *E, Z, A, process, xm, y) <= 0.)
                         continue;
 
@@ -4242,7 +4333,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
          */
         double *cs0, *cs1;
         double p1, p2;
-        const double Emin = 1E+04; /* At low energy the DIS cross-section
+        const double Emin = 2E+04; /* At low energy the DIS cross-section
                                     * might be null for CC(top), in which case
                                     * the following BMC procedure would fail.
                                     * Thus, let us freeze the final energy
