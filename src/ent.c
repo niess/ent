@@ -1117,7 +1117,7 @@ static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
                 const double mt = rest_mass(ENT_PID_TOP);
                 const double xmax =
                     1. - mt * mt / (2 * ENT_MASS_NUCLEON * energy * y);
-                if (x >= xmax) return 0.;
+                if ((xmax <= 0.) || (x >= xmax)) return 0.;
         }
 
         /* Compute the SFs. */
@@ -1614,9 +1614,15 @@ static void dis_compute_support_y_backward(struct ent_physics * physics,
                 }
                 ymin = Q2min / (Q2min + 2 * ENT_MASS_NUCLEON * energy);
         } else {
-                /* XXX Improve this? */
-                ymin = physics->dis_Q2min /
-                    (2 * ENT_MASS_NUCLEON * energy * HADRON_MAX_RATIO);
+                const double mt = rest_mass(ENT_PID_TOP);
+                if (energy <= mt * mt / (2 * ENT_MASS_NUCLEON)) {
+                        ylim[0] = 1.;
+                        ylim[1] = 1.;
+                        return;
+                } else {
+                        ymin = physics->dis_Q2min /
+                            (2 * ENT_MASS_NUCLEON * energy * HADRON_MAX_RATIO);
+                }
         }
         double ymax = 1.;
 
@@ -1744,6 +1750,16 @@ static void dis_get_support_y(struct ent_physics * physics,
     enum proget_index proget, double energy, int mode, double * ymin,
     double * ymax)
 {
+        if (mode == -1) {
+                /* Kinematic limit for top production. */
+                const double mt = rest_mass(ENT_PID_TOP);
+                if (energy <= mt * mt / (2 * ENT_MASS_NUCLEON)) {
+                        *ymin = 1.;
+                        *ymax = 1.;
+                        return;
+                }
+        }
+
         const double dle = log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
 
         double he = log(energy / ENERGY_MIN) / dle;
@@ -2953,7 +2969,16 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
         const double bmin = pow(ymin, 1. - alpha);
         const double bmax = pow(ymax, 1. - alpha);
         double xmin, xmax, cs1;
-        for (;;) {
+        int trials;
+        const int max_trials = 20;
+        for (trials = 0; trials < max_trials;) {
+                if (mode_y == -1) trials++; /* Close to the kinematic threshold
+                                             * the support resolution is
+                                             * numerically delicate. This is
+                                             * a safeguard in case former check
+                                             * failled.
+                                             */
+
                 ry = (bmax - bmin) * context->random(context) + bmin;
                 y = pow(ry, 1. / (1. - alpha));
                 if ((y <= ymin) || (y >= ymax)) continue;
@@ -2980,6 +3005,13 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
 
                 break;
         }
+        if (trials == max_trials) {
+                *E = *Q2 = 0.;
+                state->weight = 0.;
+
+                return ENT_RETURN_SUCCESS;
+        }
+
         double pdf0 = (1. - alpha) * ry / (y * (bmax - bmin));
 
         /* Sample x. */
@@ -3066,7 +3098,8 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
         /* Check and update the BMC weight. */
         double w = pdf1 / pdf0;
         if (w <= 0.) {
-                return ENT_RETURN_DOMAIN_ERROR;
+                *E = *Q2 = 0.;
+                state->weight = 0.;
         } else {
                 if (mother == ENT_PID_NONE) {
                         w /= 1. - y;
@@ -3075,8 +3108,9 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
                 }
 
                 state->weight *= w;
-                return ENT_RETURN_SUCCESS;
         }
+
+        return ENT_RETURN_SUCCESS;
 }
 
 /* Sample the inelasticity, _y_, for an interaction with an electron. The
@@ -3535,8 +3569,9 @@ static void process_dis_products(struct ent_context * context,
     enum ent_pid neutrino, struct ent_state * struck_quark,
     struct ent_state * products)
 {
+        /* Check kinematic limit for top production. */
         const double mq = rest_mass(struck_quark->pid);
-        if (struck_quark->energy <= mq) {
+        if (struck_quark->energy <= mq * mq / (2 * ENT_MASS_NUCLEON)) {
                 struck_quark->pid = ENT_PID_NONE;
         }
 
@@ -3766,6 +3801,9 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                          */
                 }
                 if (rc != ENT_RETURN_SUCCESS) return rc;
+                if (state->weight <= 0.) {
+                        return ENT_RETURN_SUCCESS;
+                }
 
                 /* Update the MC state. */
                 if ((proget >= 8) || ((proget % 2) == 0)) {
@@ -3911,6 +3949,13 @@ static enum ent_return transport_vertex_backward_top_decay(
         }
         undecay_two_body(context, &w_boson, &t_quark, &b_quark);
 
+        /* Check the kinematic limit. */
+        const double mt = rest_mass(t_quark.pid);
+        if (t_quark.energy <= mt * mt / (2 * ENT_MASS_NUCLEON)) {
+                state->weight = 0.;
+                return ENT_RETURN_SUCCESS;
+        }
+
         /* Sample the primary neutrino flavour from the hadron product.
          * XXX any weight?
          */
@@ -3943,6 +3988,10 @@ static enum ent_return transport_vertex_backward_top_decay(
                  */
         }
         if (rc != ENT_RETURN_SUCCESS) return rc;
+        if (t_quark.weight <= 0.) {
+                state->weight = 0.;
+                return ENT_RETURN_SUCCESS;
+        }
 
         /* Set the neutrino state. */
         state->pid = ancestor;
@@ -4333,12 +4382,12 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
          */
         double *cs0, *cs1;
         double p1, p2;
-        const double Emin = 2E+04; /* At low energy the DIS cross-section
-                                    * might be null for CC(top), in which case
-                                    * the following BMC procedure would fail.
-                                    * Thus, let us freeze the final energy
-                                    * whenever this could happen.
-                                    */
+        const double mt = rest_mass(ENT_PID_TOP);
+        const double Emin = 3 * mt * mt / (4 * ENT_MASS_NUCLEON);
+        /* The top production cross-section is null below kinematic cut, in
+         * which case the implemented BMC procedure would fail. Let us freeze
+         * the final energy whenever this happens.
+         */
         const double Ef =
             (daughter->energy > Emin) ? daughter->energy: Emin;
         const int mode = cross_section_prepare(
@@ -4890,7 +4939,7 @@ static enum ent_return vertex_backward(struct ent_physics * physics,
          * source process is a decay. Thus p_true = 1. and there is no need to
          * further correct the BMC weight.
          */
-        if (proget >= 0) {
+        if ((proget >= 0) && (state->weight > 0.)) {
                 enum ent_return rc;
                 double cs[PROGET_N];
                 if ((rc = transport_cross_section(physics, state->pid,
@@ -5086,31 +5135,35 @@ enum ent_return ent_transport(struct ent_physics * physics,
                         /* Then let us apply the effective weight for the
                          * transport.
                          */
-                        double X0;
-                        if (proget >= 0) {
-                                /* The ancestor is a neutrino. Let us apply
-                                 * a flux like boundary condition at the vertex.
-                                 */
-                                if ((rc = transport_cross_section(physics,
-                                         state->pid, state->energy, medium->Z,
-                                         medium->A, ENT_PROCESS_NONE,
-                                         cs)) != ENT_RETURN_SUCCESS)
-                                        goto exit;
-                                X0 = medium->A * 1E-03 /
-                                    (cs[PROGET_N - 1] * ENT_PHYS_NA);
-                        } else {
-                                /* The neutrino originates from a muon or tau
-                                 * decay. A vertex boundary condition is used
-                                 * since the initial state is not known at that
-                                 * point.
-                                 */
-                                event_ =
-                                    (proget == PROGET_BACKWARD_DECAY_MUON) ?
-                                    ENT_EVENT_DECAY_MUON :
-                                    ENT_EVENT_DECAY_TAU;
-                                X0 = density;
+                        if (state->weight > 0.) {
+                                double X0;
+                                if (proget >= 0) {
+                                        /* The ancestor is a neutrino. Let us
+                                         * apply a flux like boundary condition
+                                         * at the vertex.
+                                         */
+                                        if ((rc = transport_cross_section(
+                                            physics, state->pid, state->energy,
+                                            medium->Z, medium->A,
+                                            ENT_PROCESS_NONE, cs)) !=
+                                            ENT_RETURN_SUCCESS)
+                                                goto exit;
+                                        X0 = medium->A * 1E-03 /
+                                            (cs[PROGET_N - 1] * ENT_PHYS_NA);
+                                } else {
+                                        /* The neutrino originates from a muon
+                                         * or tau decay. A vertex boundary
+                                         * condition is used since the initial
+                                         * state is not known at that point.
+                                         */
+                                        event_ = (proget ==
+                                            PROGET_BACKWARD_DECAY_MUON) ?
+                                            ENT_EVENT_DECAY_MUON :
+                                            ENT_EVENT_DECAY_TAU;
+                                        X0 = density;
+                                }
+                                state->weight *= Xint / X0;
                         }
-                        state->weight *= Xint / X0;
                 }
         }
 
