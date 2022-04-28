@@ -3931,10 +3931,20 @@ static enum ent_return transport_vertex_backward_top_decay(
         struct ent_state w_boson = { 0. }, n_companion = { 0. };
         w_boson.pid = ENT_PID_W_PLUS;
         const int aid = abs(state->pid);
-        n_companion.pid = (aid % 2) ? aid + 1 : -aid + 1;
-        if (state->pid > 0) {
-                w_boson.pid = -w_boson.pid;
-                n_companion.pid = -n_companion.pid;
+        if (aid % 2) {
+                /* Charged lepton case. */
+                n_companion.pid = aid + 1;
+                if (state->pid > 0) {
+                        w_boson.pid = -w_boson.pid;
+                        n_companion.pid = -n_companion.pid;
+                }
+        } else {
+                /* Neutrino case. */
+                n_companion.pid = -aid + 1;
+                if (state->pid < 0) {
+                        w_boson.pid = -w_boson.pid;
+                        n_companion.pid = -n_companion.pid;
+                }
         }
         undecay_two_body(context, &l_companion, &w_boson, &n_companion);
 
@@ -3963,7 +3973,13 @@ static enum ent_return transport_vertex_backward_top_decay(
         enum ent_pid pid[3];
         int i;
         for (i = 0; i < 3; i++) {
-                pid[i] = (state->pid > 0) ? -12 - 2 * i : 12 + 2 * i;
+                if (state->pid % 2) {
+                        /* Charged lepton product is opposite CP. */
+                        pid[i] = (state->pid > 0) ? -12 - 2 * i : 12 + 2 * i;
+                } else {
+                        /* Neutrino product is same CP. */
+                        pid[i] = (state->pid > 0) ? 12 + 2 * i : -12 - 2 * i;
+                }
                 const double d = context->ancestor(context, pid[i], state);
                 p[i] = ((i > 0) ? p[i - 1] : 0.) + ((d > 0.) ? d : 0.);
         }
@@ -4545,7 +4561,77 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                         }
                 }
 
-                /* XXX Add top decays as well ... */
+                /* Neutrino from top decay in a CC DIS. */
+                if ((process == ENT_PROCESS_NONE) ||
+                    (process == ENT_PROCESS_DIS_CC) ||
+                    (process == ENT_PROCESS_DIS_CC_TOP)) {
+                        double rho1 = 0.;
+                        int j;
+                        for (j = 0; j < 3; j++) {
+                                const int pid =
+                                    (daughter->pid > 0) ? 12 + 2 * j :
+                                        -12 - 2 * j;
+                                const double d = context->ancestor(
+                                    context, pid, daughter);
+                                if (d > 0.) rho1 += d;
+                        }
+                        if (rho1 > 0.) {
+                                /* CC processes with top production and
+                                 * leptonic W decay.
+                                 */
+                                double br;
+                                if (apid == ENT_PID_NU_E) {
+                                        br = ENT_BR_W_TO_ELECTRON;
+                                } else if (apid == ENT_PID_NU_MU) {
+                                        br = ENT_BR_W_TO_MUON;
+                                } else {
+                                        br = ENT_BR_W_TO_TAU;
+                                }
+                                *br_ptr = br;
+
+                                /* Neutron target. */
+                                if (N > 0.) {
+                                        if (daughter->pid > 0) {
+                                                proget_v[np] =
+                                                    PROGET_CC_TOP_NU_NEUTRON;
+                                                ancestor_v[np] =
+                                                    ENT_PID_TOP;
+                                        } else {
+                                                proget_v[np] =
+                                                    PROGET_CC_TOP_NU_BAR_NEUTRON;
+                                                ancestor_v[np] =
+                                                    ENT_PID_TOP_BAR;
+                                        }
+                                        p[np] = (np > 0 ? p[np - 1] : 0.) +
+                                            rho1 * N * br *
+                                            cross_section_compute(
+                                                mode, proget_v[np], cs0, cs1,
+                                                p1, p2);
+                                        if (p[np] > 0.) np++;
+                                }
+
+                                /* Proton target. */
+                                if (Z > 0.) {
+                                        if (daughter->pid > 0) {
+                                                proget_v[np] =
+                                                    PROGET_CC_TOP_NU_PROTON;
+                                                ancestor_v[np] =
+                                                    ENT_PID_TOP;
+                                        } else {
+                                                proget_v[np] =
+                                                    PROGET_CC_TOP_NU_BAR_PROTON;
+                                                ancestor_v[np] =
+                                                    ENT_PID_TOP_BAR;
+                                        }
+                                        p[np] = (np > 0 ? p[np - 1] : 0.) +
+                                            rho1 * Z * br *
+                                            cross_section_compute(
+                                                mode, proget_v[np], cs0, cs1,
+                                                p1, p2);
+                                        if (p[np] > 0.) np++;
+                                }
+                        }
+                }
 
                 /* True decay processes. */
                 if (medium->density != NULL) {
