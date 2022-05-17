@@ -2968,7 +2968,7 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
         double ry, y;
         const double bmin = pow(ymin, 1. - alpha);
         const double bmax = pow(ymax, 1. - alpha);
-        double xmin, xmax, cs1;
+        double xmin, xmax, cs1 = 0.;
         int trials;
         const int max_trials = 20;
         for (trials = 0; trials < max_trials;) {
