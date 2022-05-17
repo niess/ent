@@ -1580,7 +1580,12 @@ static double cross_section_compute(
 {
         if (mode == 0) {
                 /* interpolation case. */
-                return cs0[proget] * (1. - p1) + cs1[proget] * p1;
+                if ((cs0[proget] > 0.) && (cs1[proget] > 0.)) {
+                        return exp(log(cs0[proget]) * (1. - p1) +
+                                   log(cs1[proget]) * p1);
+                } else {
+                        return cs0[proget] * (1. - p1) + cs1[proget] * p1;
+                }
         } else if (mode == 1) {
                 /* Extrapolation case (below). */
                 if (cs0[proget] * cs1[proget] <= 0.) {
