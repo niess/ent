@@ -1454,7 +1454,9 @@ static void dis_top_clip_y(double energy, double * ymin)
 {
         const double mt = rest_mass(ENT_PID_TOP);
         const double yk = mt * mt / (2 * ENT_MASS_NUCLEON * energy);
-        if (*ymin < yk) *ymin = yk;
+        if (*ymin < yk) {
+                *ymin = (yk < 1.) ? yk : 1.;
+        }
 }
 
 /* Refine DIS DCS support, in forward case. */
@@ -1804,8 +1806,8 @@ static void dis_get_support_y(struct ent_physics * physics,
         double * y0 = dis_ylim + offset + 2 * ie;
         double * y1 = dis_ylim + offset + 2 * (ie + 1);
 
-        *ymin = y0[0] * (1. - he) + y1[0] * he;
-        *ymax = y0[1] * (1. - he) + y1[1] * he;
+        *ymin = (y0[0] == y1[0]) ? y0[0] : y0[0] * (1. - he) + y1[0] * he;
+        *ymax = (y0[1] == y1[1]) ? y0[1] : y0[1] * (1. - he) + y1[1] * he;
 
         if (mode == 1) {
                 if (proget < 8) {
