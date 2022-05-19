@@ -83,7 +83,7 @@
 #define ENT_FORMAT_TAG "/ent/"
 
 /* ENT data format version. */
-#define ENT_FORMAT_VERSION 2
+#define ENT_FORMAT_VERSION 3
 
 /* Indices for Physics processes with a specific projectile and target. */
 enum proget_index {
@@ -226,22 +226,14 @@ static enum ent_return proget_compute(enum ent_pid projectile,
         return ENT_RETURN_SUCCESS;
 }
 
-/* Mode flags for BMC algorithm. */
-enum bmc_mode {
-        /* Use a bias PDF for sampling x. */
-        BMC_MODE_BIAS = 0,
-        /* Compute the x-CDF on the fly and inverse it. */
-        BMC_MODE_INVERSE_CDF
-};
-
 /* Opaque Physics object. */
 struct ent_physics {
         /* Index to the PDF data. */
         struct grid * pdf;
         /* Index to the DIS SFs data. */
         struct grid * sf[PROGET_N_DIS];
-        /* BMC algorithm flags. */
-        enum bmc_mode bmc_mode[PROGET_N_DIS];
+        /* Effective thresholds for top production. */
+        double mteff[5];
         /* Entry point for kinematic cross-sections, computed from DCSs. */
         double * cs_k;
         /* Entry point for transport cross-sections, which the user might
@@ -609,7 +601,7 @@ static enum ent_return grid_compute_lambda(struct grid * g, int * freeze)
 
 /* Load a single grid in ENT format. */
 static enum ent_return grid_load(
-    struct grid ** g_ptr, FILE * stream, int * freeze, enum bmc_mode * mode)
+    struct grid ** g_ptr, FILE * stream, int * freeze)
 {
         struct grid * g = NULL;
         enum ent_return rc;
@@ -618,8 +610,7 @@ static enum ent_return grid_load(
         int nx, nQ2, nf;
         if ((fread(&nx, sizeof(nx), 1, stream) != 1) ||
             (fread(&nQ2, sizeof(nQ2), 1, stream) != 1) ||
-            (fread(&nf, sizeof(nf), 1, stream) != 1) ||
-            (fread(mode, sizeof(*mode), 1, stream) != 1))
+            (fread(&nf, sizeof(nf), 1, stream) != 1))
         {
                 rc = ENT_RETURN_FORMAT_ERROR;
                 goto error;
@@ -749,6 +740,8 @@ static void grid_compute(
         }
 }
 
+static double rest_mass(enum ent_pid pid);
+
 /* Load DIS physics from an ENT file. */
 static enum ent_return physics_load(
     struct ent_physics ** physics, FILE * stream)
@@ -818,12 +811,26 @@ static enum ent_return physics_load(
                         }
                 } else {
                         if ((rc = grid_load((*physics)->sf + i, stream,
-                            NULL, (*physics)->bmc_mode + i)) !=
+                            NULL)) !=
                             ENT_RETURN_SUCCESS) {
                                 goto error;
                         }
                 }
         }
+
+        /* Load top production threshold. */
+        if (fread((*physics)->mteff, sizeof(*(*physics)->mteff), 4, stream)
+            != 4) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
+        const double mt = rest_mass(ENT_PID_TOP);
+        double mtmax = 0.;
+        for (i = 0; i < 4; i++) {
+                if ((*physics)->mteff[i] < mt) (*physics)->mteff[i] = mt;
+                if ((*physics)->mteff[i] > mtmax) mtmax = (*physics)->mteff[i];
+        }
+        (*physics)->mteff[4] = mtmax;
 
         return ENT_RETURN_SUCCESS;
 error:
@@ -965,6 +972,13 @@ static enum ent_return lha_load(struct ent_physics ** physics, FILE * stream)
                 rc = ENT_RETURN_MEMORY_ERROR;
         } else {
                 (*physics)->pdf = head;
+        }
+
+        /* Set cutoff for top production. */
+        const double mt = rest_mass(ENT_PID_TOP);
+        int i;
+        for (i = 0; i < 5; i++) {
+                (*physics)->mteff[i] = mt;
         }
 exit:
         free(buffer);
@@ -1113,8 +1127,7 @@ static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
         if (process == ENT_PROCESS_DIS_CC_TOP) {
                 /* Check kinematic threshold. */
                 if (y <= 0.) return 0.;
-
-                const double mt = rest_mass(ENT_PID_TOP);
+                const double mt = physics->mteff[projectile < 0];
                 const double xmax =
                     1. - mt * mt / (2 * ENT_MASS_NUCLEON * energy * y);
                 if ((xmax <= 0.) || (x >= xmax)) return 0.;
@@ -1252,9 +1265,10 @@ static double dcs_compute(struct ent_physics * physics, enum ent_pid projectile,
 }
 
 /* Kinematic limit for top prodcution in DIS. */
-static void dis_top_clip_x(double energy, double y, double * xmax)
+static void dis_top_clip_x(struct ent_physics * physics,
+    enum proget_index proget, double energy, double y, double * xmax)
 {
-        const double mt = rest_mass(ENT_PID_TOP);
+        const double mt = physics->mteff[proget - 8];
         double xk =
             1. - mt * mt / (2 * ENT_MASS_NUCLEON * energy * y);
         if (xk < 0.) xk = 0.;
@@ -1275,7 +1289,7 @@ static void dis_compute_support_x(struct ent_physics * physics,
         if (xmax > 1.) xmax = 1.;
 
         if (process == ENT_PROCESS_DIS_CC_TOP) {
-                dis_top_clip_x(energy, y, &xmax);
+                dis_top_clip_x(physics, 8 + (projectile < 0), energy, y, &xmax);
         }
 
         if (xmin >= xmax) {
@@ -1402,7 +1416,7 @@ static void dis_get_support_x(struct ent_physics * physics,
 
                 if (proget >= 8) {
                         /* Kinematic threshold. */
-                        dis_top_clip_x(energy, y, xmax);
+                        dis_top_clip_x(physics, proget, energy, y, xmax);
                 }
                 if (*xmin >= *xmax) *xmin = *xmax;
 
@@ -1438,7 +1452,7 @@ static void dis_get_support_x(struct ent_physics * physics,
 
         if (proget >= 8) {
                 /* Kinematic threshold. */
-                dis_top_clip_x(energy, y, xmax);
+                dis_top_clip_x(physics, proget, energy, y, xmax);
         }
         if (*xmin >= *xmax) *xmin = *xmax;
 
@@ -1450,9 +1464,10 @@ static void dis_get_support_x(struct ent_physics * physics,
 }
 
 /* Kinematic limit for top production. */
-static void dis_top_clip_y(double energy, double * ymin)
+static void dis_top_clip_y(const struct ent_physics * physics,
+    enum proget_index proget, double energy, double * ymin)
 {
-        const double mt = rest_mass(ENT_PID_TOP);
+        const double mt = physics->mteff[proget - 8];
         const double yk = mt * mt / (2 * ENT_MASS_NUCLEON * energy);
         if (*ymin < yk) {
                 *ymin = (yk < 1.) ? yk : 1.;
@@ -1506,7 +1521,7 @@ static void dis_compute_support_y_forward(struct ent_physics * physics,
                 }
         }
         if (process == ENT_PROCESS_DIS_CC_TOP) {
-                dis_top_clip_y(energy, &y1);
+                dis_top_clip_y(physics, proget, energy, &y1);
         }
         ylim[0] = y1;
 
@@ -1610,18 +1625,22 @@ static void dis_compute_support_y_backward(struct ent_physics * physics,
 {
 #define HADRON_MAX_RATIO 1E+04
 
+        enum proget_index proget;
+        const enum ent_pid target = (Z > 0.) ? ENT_PID_PROTON : ENT_PID_NEUTRON;
+        proget_compute(projectile, target, process, &proget);
+
         double ymin;
         if (mode) {
                 double Q2min;
                 if (process == ENT_PROCESS_DIS_CC_TOP) {
-                        const double mt = rest_mass(ENT_PID_TOP);
+                        const double mt = physics->mteff[proget - 8];
                         Q2min = mt * mt;
                 } else {
                         Q2min = physics->dis_Q2min;
                 }
                 ymin = Q2min / (Q2min + 2 * ENT_MASS_NUCLEON * energy);
         } else {
-                const double mt = rest_mass(ENT_PID_TOP);
+                const double mt = physics->mteff[proget -8]; /* XXX valid? */
                 if (energy <= mt * mt / (2 * ENT_MASS_NUCLEON)) {
                         ylim[0] = 1.;
                         ylim[1] = 1.;
@@ -1637,9 +1656,6 @@ static void dis_compute_support_y_backward(struct ent_physics * physics,
          * bracketing using an exponential search.
          */
         double r, y0, y1;
-        enum proget_index proget;
-        const enum ent_pid target = (Z > 0.) ? ENT_PID_PROTON : ENT_PID_NEUTRON;
-        proget_compute(projectile, target, process, &proget);
 
         r = 2.;
         y0 = y1 = ymin;
@@ -1759,7 +1775,7 @@ static void dis_get_support_y(struct ent_physics * physics,
 {
         if (mode == -1) {
                 /* Kinematic limit for top production. */
-                const double mt = rest_mass(ENT_PID_TOP);
+                const double mt = physics->mteff[proget - 8];
                 if (energy <= mt * mt / (2 * ENT_MASS_NUCLEON)) {
                         *ymin = 1.;
                         *ymax = 1.;
@@ -1775,11 +1791,12 @@ static void dis_get_support_y(struct ent_physics * physics,
                 if (mode == 1) {
                         *ymin = physics->dis_Q2min /
                             (2 * ENT_MASS_NUCLEON * energy );
-                        if (proget >= 8) dis_top_clip_y(energy, ymin);
+                        if (proget >= 8)
+                                dis_top_clip_y(physics, proget, energy, ymin);
                 } else if (mode == 0) {
                         double Q2min;
                         if (proget >= 8) {
-                                const double mt = rest_mass(ENT_PID_TOP);
+                                const double mt = physics->mteff[proget - 8];
                                 Q2min = mt * mt;
                         } else {
                                 Q2min = physics->dis_Q2min;
@@ -1815,14 +1832,14 @@ static void dis_get_support_y(struct ent_physics * physics,
                             (2 * ENT_MASS_NUCLEON * energy);
                         if (*ymin < yk) *ymin = yk;
                 } else {
-                        dis_top_clip_y(energy, ymin);
+                        dis_top_clip_y(physics, proget, energy, ymin);
                 }
         } else if (mode == 0) {
                 double Q2min;
                 if (proget < 8) {
                         Q2min = physics->dis_Q2min;
                 } else {
-                        const double mt = rest_mass(ENT_PID_TOP);
+                        const double mt = physics->mteff[proget - 8];
                         Q2min = mt * mt;
                 }
                 const double yk =
@@ -3027,7 +3044,7 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
         const double x0 = 0.5 * MX * MX / (*E * y * ENT_MASS_NUCLEON);
 
         double pdf1;
-        if (physics->bmc_mode[proget] == BMC_MODE_BIAS) {
+        {
                 /* Sample x assuming an asymptotic small x PDF. */
                 const double beta = DIS_X_EXPONENT;
                 const double bmin = pow(1. + xmin / x0, 1. - beta);
@@ -3045,61 +3062,6 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
                 const double dcs1 =
                     dcs_dis(physics, pid, *E, Z, A, process, x, y);
                 pdf1 = dcs1 / cs1;
-        } else if (physics->bmc_mode[proget] == BMC_MODE_INVERSE_CDF) {
-                /* Sample x given the conditional PDF for y and using the
-                 * inverse CDF method. First, let us compute the CDF integrand
-                 * over x using a log sampling.
-                 */
-                double dlx = log(xmax / xmin);
-                const double ln10i = 0.4343; /* 1 / ln(10) */
-                const int n_pts_per_decade = 20;
-                int nx = (int)(dlx * n_pts_per_decade * ln10i) + 1;
-                const int nmin = 41;
-                if (nx < nmin) nx = nmin;
-                dlx /= nx - 1;
-
-                double pdf[nx];
-                int i;
-                for (i = 0; i < nx; i++) {
-                        const double xi = xmin * exp(i * dlx);
-                        pdf[i] = dcs_dis(
-                            physics, pid, *E, Z, A, process, xi, y) * xi;
-                }
-
-                /* Compute the CDF. */
-                double cdf[nx - 1], ci = 0.;
-                for (i = 0; i < nx - 1; i++) {
-                        ci += 0.5 * dlx * (pdf[i] + pdf[i + 1]);
-                        cdf[i] = ci;
-                }
-
-                /* Sample x from the CDF. */
-                double rx = context->random(context) * cdf[nx - 2];
-                int i0 = 0, i1 = nx - 2;
-                while (i1 - i0 > 1) {
-                        const int i2 = (i0 + i1) / 2;
-                        if (rx > cdf[i2]) i0 = i2;
-                        else i1 = i2;
-                }
-                if (i1 > nx - 2) {
-                        i0 = nx - 3;
-                        i1 = nx - 2;
-                }
-                const double ax = 0.5 * (pdf[i1 + 1] - pdf[i0 + 1]);
-                const double bx = pdf[i0 + 1];
-                const double cx = -(rx - cdf[i0]) / dlx;
-                double dx = bx * bx - 4 * ax * cx;
-                dx = (dx < 0.) ? 0. : sqrt(dx);
-                double hx = (dx - bx) / (2 * ax);
-                if (hx < 0.) hx = 0.;
-                else if (hx > 1.) hx = 1.;
-                const double x = xmin * exp(dlx * (i0 + hx));
-                *Q2 = 2. * ENT_MASS_NUCLEON * (*E) * x * y;
-
-                /* Compute the true marginal PDF over y. */
-                pdf1 = cdf[nx - 2] / cs1;
-        } else {
-                return ENT_RETURN_DOMAIN_ERROR;
         }
 
         /* Check and update the BMC weight. */
@@ -3572,12 +3534,13 @@ static void undecay_two_body(struct ent_context * context,
 }
 
 /* Decay DIS products, whenever a top is produced. */
-static void process_dis_products(struct ent_context * context,
-    enum ent_pid neutrino, struct ent_state * struck_quark,
-    struct ent_state * products)
+static void process_dis_products(const struct ent_physics * physics,
+    struct ent_context * context, enum ent_pid neutrino,
+    struct ent_state * struck_quark, struct ent_state * products)
 {
         /* Check kinematic limit for top production. */
-        const double mq = rest_mass(struck_quark->pid);
+        const double mq = (abs(struck_quark->pid) == ENT_PID_TOP) ?
+            physics->mteff[neutrino < 0] : rest_mass(struck_quark->pid);
         if (struck_quark->energy <= mq * mq / (2 * ENT_MASS_NUCLEON)) {
                 struck_quark->pid = ENT_PID_NONE;
         }
@@ -3724,7 +3687,7 @@ static enum ent_return transport_vertex_forward(struct ent_physics * physics,
                         }
 
                         /* Update energies. */
-                        process_dis_products(context, state->pid,
+                        process_dis_products(physics, context, state->pid,
                             &struck_quark, products);
                 }
         } else if (proget < PROGET_GLASHOW_HADRONS) {
@@ -3865,8 +3828,8 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                         }
 
                         /* Process decay products. */
-                        process_dis_products(context, state->pid, &struck_quark,
-                            products);
+                        process_dis_products(physics, context, state->pid,
+                            &struck_quark, products);
                 }
         } else if (proget < PROGET_GLASHOW_HADRONS) {
                 /* This is an interaction with an atomic electron and a
@@ -3967,7 +3930,7 @@ static enum ent_return transport_vertex_backward_top_decay(
         undecay_two_body(context, &w_boson, &t_quark, &b_quark);
 
         /* Check the kinematic limit. */
-        const double mt = rest_mass(t_quark.pid);
+        const double mt = physics->mteff[proget - 8];
         if (t_quark.energy <= mt * mt / (2 * ENT_MASS_NUCLEON)) {
                 state->weight = 0.;
                 return ENT_RETURN_SUCCESS;
@@ -4405,7 +4368,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
          */
         double *cs0, *cs1;
         double p1, p2;
-        const double mt = rest_mass(ENT_PID_TOP);
+        const double mt = physics->mteff[4];
         const double Emin = 3 * mt * mt / (4 * ENT_MASS_NUCLEON);
         /* The top production cross-section is null below kinematic cut, in
          * which case the implemented BMC procedure would fail. Let us freeze

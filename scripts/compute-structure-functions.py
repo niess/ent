@@ -19,7 +19,7 @@ import lhapdf
 FORMAT_TAG = "/ent/"
 
 """ENT data format version"""
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 
 
 """Physics constants"""
@@ -150,16 +150,9 @@ class StructureFunctions(NamedTuple):
         else:
             c = contrib
 
-        # BMC algorithm to be used. For BGR18, the top DCS is awkward at low
-        # energy. It requires a specific algorithm in backward mode.
-        if ("BGR18" in args.o) and (c == Contribution.TOP):
-            mode = 1
-        else:
-            mode = 0
-
         # Pack the table header
         nx, nq, nf = len(self.x), len(self.q), 3
-        n = numpy.array((nx, nq, nf, mode), dtype="i4")
+        n = numpy.array((nx, nq, nf), dtype="i4")
         x = numpy.array(self.x, dtype="f4")
         Q2 = numpy.array(self.q**2, dtype="f4")
         data = numpy.empty((nx, nq, nf), dtype="f4")
@@ -278,6 +271,12 @@ def compute_sf():
     # Dump top contributions
     for sf in sfs:
         sf.dump(outfile, Contribution.TOP)
+
+    # Dump thresholds for top production
+    mteff = numpy.sqrt(2) * pdf.quarkMass(6) if ("BGR18" in args.o) else 0
+    top_threshold = numpy.array((0, mteff, 0, mteff), dtype='f8')
+    with open(outfile, "ab") as f:
+        f.write(top_threshold.tobytes())
 
 
 if __name__ == "__main__":
