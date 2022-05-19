@@ -1590,7 +1590,7 @@ static int cross_section_prepare(double * cs, double energy, double ** cs0,
 }
 
 /* Low level routine for computing a specific cross-section by interpolation
- * or extrapolation.
+ * or by extrapolation.
  */
 static double cross_section_compute(
     int mode, int proget, double * cs0, double * cs1, double p1, double p2)
@@ -1619,7 +1619,7 @@ static double cross_section_compute(
 }
 
 /* Map DIS DCS support as Ef, in backward case. */
-static void dis_compute_support_y_backward(struct ent_physics * physics, 
+static void dis_compute_support_y_backward(struct ent_physics * physics,
     enum ent_pid projectile, double energy, double Z, double A,
     enum ent_process process, int mode, double * ylim)
 {
@@ -1629,25 +1629,26 @@ static void dis_compute_support_y_backward(struct ent_physics * physics,
         const enum ent_pid target = (Z > 0.) ? ENT_PID_PROTON : ENT_PID_NEUTRON;
         proget_compute(projectile, target, process, &proget);
 
+        double Q2min;
+        if (process == ENT_PROCESS_DIS_CC_TOP) {
+                const double mt = physics->mteff[proget - 8];
+                Q2min = mt * mt;
+        } else {
+                Q2min = physics->dis_Q2min;
+        }
+
         double ymin;
         if (mode) {
-                double Q2min;
-                if (process == ENT_PROCESS_DIS_CC_TOP) {
-                        const double mt = physics->mteff[proget - 8];
-                        Q2min = mt * mt;
-                } else {
-                        Q2min = physics->dis_Q2min;
-                }
                 ymin = Q2min / (Q2min + 2 * ENT_MASS_NUCLEON * energy);
         } else {
-                const double mt = physics->mteff[proget -8]; /* XXX valid? */
-                if (energy <= mt * mt / (2 * ENT_MASS_NUCLEON)) {
+                if (energy <= Q2min / (2 * ENT_MASS_NUCLEON)) {
                         ylim[0] = 1.;
                         ylim[1] = 1.;
                         return;
                 } else {
-                        ymin = physics->dis_Q2min /
+                        ymin = Q2min /
                             (2 * ENT_MASS_NUCLEON * energy * HADRON_MAX_RATIO);
+                        if (ymin > 1.) ymin = 1.;
                 }
         }
         double ymax = 1.;
