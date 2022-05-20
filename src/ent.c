@@ -1420,7 +1420,7 @@ static void dis_get_support_x(struct ent_physics * physics,
                 }
                 if (*xmin >= *xmax) *xmin = *xmax;
 
-                if (pdf_ratio) {
+                if (pdf_ratio != NULL) {
                         /* However, freeze PDF ratio. */
                         const double * const xlim = physics->dis_xlim +
                             3 * ((proget * ENERGY_N + ENERGY_N - 1) * DIS_Y_N);
@@ -4237,8 +4237,11 @@ static enum ent_return transport_cross_section(struct ent_physics * physics,
         }
 
         /* Check the result and return. */
-        if (cs[PROGET_N - 1] <= 0.) return ENT_RETURN_DOMAIN_ERROR;
-        return ENT_RETURN_SUCCESS;
+        if ((process == ENT_PROCESS_NONE) && (cs[PROGET_N - 1] <= 0.)) {
+                return ENT_RETURN_DOMAIN_ERROR;
+        } else {
+                return ENT_RETURN_SUCCESS;
+        }
 }
 
 /* Generic builder for the ancestor likeliness. */
@@ -4829,86 +4832,6 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
             context, daughter, np, proget_v, p, ancestor_v, ancestor, proget);
 }
 
-/* Compute the p and n cross-sections for a DIS standalone vertex. */
-static enum ent_return vertex_dis_compute(struct ent_physics * physics,
-    enum ent_pid pid, double energy, struct ent_medium * medium,
-    enum ent_process process, int * proget_p_, int * proget_n_, double * cs_p,
-    double * cs_n)
-{
-        enum ent_return rc;
-        int proget_p, proget_n;
-        if ((rc = proget_compute(pid, ENT_PID_PROTON, process, &proget_p)) !=
-            ENT_RETURN_SUCCESS)
-                return rc;
-        *proget_p_ = proget_p;
-        if ((rc = proget_compute(pid, ENT_PID_NEUTRON, process, &proget_n)) !=
-            ENT_RETURN_SUCCESS)
-                return rc;
-        *proget_n_ = proget_n;
-
-        /* Let us build the interpolation or extrapolation
-         * factors for the cross-sections.
-         */
-        double *cs0, *cs1;
-        double p1, p2;
-        int mode = cross_section_prepare(
-            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
-
-        /* Compute the relevant cross-sections and randomise the
-         * target accordingly.
-         */
-        *cs_p = (medium->Z > 0.) ? medium->Z *
-                cross_section_compute(mode, proget_p, cs0, cs1, p1, p2) :
-                                   0.;
-        const double N = medium->A - medium->Z;
-        *cs_n = (N > 0.) ?
-            N * cross_section_compute(mode, proget_n, cs0, cs1, p1, p2) :
-            0.;
-
-        if (*cs_p + *cs_n <= 0.) { /* Fallback in case of null cross-section. */
-                *cs_p = medium-> Z / medium->A;
-                *cs_n = 1. - *cs_p;
-        }
-
-        return ENT_RETURN_SUCCESS;
-}
-
-/* Randomise the proget index for a DIS standalone vertex.  */
-static enum ent_return vertex_dis_randomise(struct ent_physics * physics,
-    struct ent_context * context, struct ent_state * state,
-    struct ent_medium * medium, enum ent_process process, int * proget)
-{
-        /* Get the mother's pid. */
-        enum ent_pid pid;
-        if ((process == ENT_PROCESS_DIS_NC) || (context->ancestor == NULL))
-                pid = state->pid;
-        else {
-                pid = abs(state->pid) + 1;
-                if (state->pid < 0) pid = -pid;
-        }
-
-        /* Compute the p and n cross-sections. */
-        enum ent_return rc;
-        int proget_p, proget_n;
-        double cs_p, cs_n;
-        if ((rc = vertex_dis_compute(physics, pid, state->energy, medium,
-                 process, &proget_p, &proget_n, &cs_p, &cs_n)) !=
-            ENT_RETURN_SUCCESS)
-                return rc;
-
-        /* Randomise the target accordingly. */
-        *proget = (context->random(context) < cs_p / (cs_p + cs_n)) ? proget_p :
-                                                                      proget_n;
-
-        if (context->ancestor != NULL) {
-                /* Update the BMC weight. */
-                const double cs = (*proget == proget_p) ? cs_p : cs_n;
-                state->weight *= (cs_p + cs_n) / cs;
-        }
-
-        return ENT_RETURN_SUCCESS;
-}
-
 /* Vertex randomisation in forward Monte-Carlo. */
 static enum ent_return vertex_forward(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state,
@@ -4918,7 +4841,10 @@ static enum ent_return vertex_forward(struct ent_physics * physics,
         /* Get the process and target index. */
         int proget;
         if ((process == ENT_PROCESS_NONE) ||
-            (process == ENT_PROCESS_DIS_CC)) {
+            (process == ENT_PROCESS_DIS_CC) ||
+            (process == ENT_PROCESS_DIS_CC_OTHER) ||
+            (process == ENT_PROCESS_DIS_CC_TOP) ||
+            (process == ENT_PROCESS_DIS_NC)) {
                 /* Randomise the process and the target if not specified.
                  * First let's compute the relevant cross-sections.
                  */
@@ -4932,20 +4858,15 @@ static enum ent_return vertex_forward(struct ent_physics * physics,
                 /* Then, let us randomise the interaction process and its
                  * corresponding target.
                  */
-                const double r = cs[PROGET_N - 1] * context->random(context);
-                if (r < 0.) return ENT_RETURN_DOMAIN_ERROR;
-                for (proget = 0; proget < PROGET_N; proget++)
-                        if (r <= cs[proget]) break;
-        } else if ((process == ENT_PROCESS_DIS_CC_OTHER) ||
-            (process == ENT_PROCESS_DIS_CC_TOP) ||
-            (process == ENT_PROCESS_DIS_NC)) {
-                /* This is a DIS event on a proton or neutron. Let's get the
-                 * corresponding indices.
-                 */
-                enum ent_return rc;
-                if ((rc = vertex_dis_randomise(physics, context, state, medium,
-                         process, &proget)) != ENT_RETURN_SUCCESS)
-                        return rc;
+                if (cs[PROGET_N - 1] <= 0.) {
+                        return ENT_RETURN_SUCCESS;
+                } else {
+                        const double r =
+                            cs[PROGET_N - 1] * context->random(context);
+                        if (r < 0.) return ENT_RETURN_DOMAIN_ERROR;
+                        for (proget = 0; proget < PROGET_N; proget++)
+                                if (r <= cs[proget]) break;
+                }
         } else {
                 /* This is an interaction with an atomic electron. Let's get
                  * the corresponding index.
