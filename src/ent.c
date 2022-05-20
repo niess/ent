@@ -1794,7 +1794,7 @@ static void dis_get_support_y(struct ent_physics * physics,
                             (2 * ENT_MASS_NUCLEON * energy );
                         if (proget >= 8)
                                 dis_top_clip_y(physics, proget, energy, ymin);
-                } else if (mode == 0) {
+                } else {
                         double Q2min;
                         if (proget >= 8) {
                                 const double mt = physics->mteff[proget - 8];
@@ -1802,10 +1802,15 @@ static void dis_get_support_y(struct ent_physics * physics,
                         } else {
                                 Q2min = physics->dis_Q2min;
                         }
-                        *ymin = Q2min / (Q2min + 2 * ENT_MASS_NUCLEON * energy);
-                } else {
-                        *ymin = physics->dis_Q2min /
-                            (2 * ENT_MASS_NUCLEON * energy * HADRON_MAX_RATIO);
+
+                        if (mode == 0) {
+                                *ymin = Q2min /
+                                    (Q2min + 2 * ENT_MASS_NUCLEON * energy);
+                        } else {
+                                *ymin = Q2min /
+                                    (2 * ENT_MASS_NUCLEON * energy *
+                                     HADRON_MAX_RATIO);
+                        }
                 }
                 *ymax = 1.;
                 return;
@@ -4248,12 +4253,10 @@ static void ancestor_likeliness_fill(struct ent_context * context,
                     context->ancestor(context, pid[i], daughter);
                 if (rho0 > 0.) {
                         proget_v[*np] = proget[i];
-                        const double p0 = (*np > 0) ? p[*np - 1] : 0.;
-                        p[*np] = p0 +
-                            rho0 * Z *
-                                cross_section_compute(
-                                    mode, proget[i], cs0, cs1, p1, p2);
-                        ancestor_v[(*np)++] = pid[i];
+                        ancestor_v[*np] = pid[i];
+                        p[*np] = rho0 * Z * cross_section_compute(
+                            mode, proget[i], cs0, cs1, p1, p2);
+                        if (p[*np] > 0.) (*np)++;
                 }
         }
 }
@@ -4324,9 +4327,9 @@ static void ancestor_decay(struct ent_context * context,
                         c = ENT_CTAU_TAU * sqrt(g * (2. + g));
                         proget_v[*np] = PROGET_BACKWARD_DECAY_TAU;
                 }
-                const double p0 = (*np > 0) ? p[*np - 1] : 0.;
-                p[*np] = p0 + rho0 * A * 1E-03 / (ENT_PHYS_NA * density * c);
-                ancestor_v[(*np)++] = mother;
+                ancestor_v[*np] = mother;
+                p[*np] = rho0 * A * 1E-03 / (ENT_PHYS_NA * density * c);
+                if (p[*np] > 0.) (*np)++;
         }
 }
 
@@ -4343,8 +4346,12 @@ static enum ent_return ancestor_draw(struct ent_context * context,
                 *ancestor = ancestor_v[0];
                 *proget = proget_v[0];
         } else {
-                const double r = context->random(context) * p[np - 1];
                 int i;
+                for (i = 1; i < np; i++) {
+                        p[i] += p[i - 1];
+                }
+
+                const double r = context->random(context) * p[np - 1];
                 for (i = 0; i < np; i++) {
                         if (r <= p[i]) break;
                 }
@@ -4411,7 +4418,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                             PROGET_NC_NU_NEUTRON :
                                             PROGET_NC_NU_BAR_NEUTRON;
                                         ancestor_v[np] = daughter->pid;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho0 * N * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4424,7 +4431,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                             PROGET_NC_NU_PROTON :
                                             PROGET_NC_NU_BAR_PROTON;
                                         ancestor_v[np] = daughter->pid;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho0 * Z * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4454,7 +4461,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                                     PROGET_ELASTIC_NU_TAU;
                                         if (daughter->pid < 0) proget_v[np]++;
                                         ancestor_v[np] = daughter->pid;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho0 * Z * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4473,7 +4480,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                 if (rho1 > 0.) {
                                         proget_v[np] = PROGET_INVERSE_NU_MU_MU;
                                         ancestor_v[np] = ENT_PID_NU_MU;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho1 * Z * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4489,7 +4496,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                         proget_v[np] =
                                             PROGET_INVERSE_NU_TAU_TAU;
                                         ancestor_v[np] = ENT_PID_NU_TAU;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho2 * Z * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4506,7 +4513,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                         proget_v[np] =
                                             PROGET_INVERSE_NU_BAR_E_MU;
                                         ancestor_v[np] = ENT_PID_NU_BAR_E;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho0 * Z * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4523,7 +4530,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                         proget_v[np] =
                                             PROGET_INVERSE_NU_BAR_E_TAU;
                                         ancestor_v[np] = ENT_PID_NU_BAR_E;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho0 * Z * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4573,7 +4580,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                                 ancestor_v[np] =
                                                     ENT_PID_TOP_BAR;
                                         }
-                                        p[np] = (np > 0 ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho1 * N * br *
                                             cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
@@ -4594,7 +4601,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                                 ancestor_v[np] =
                                                     ENT_PID_TOP_BAR;
                                         }
-                                        p[np] = (np > 0 ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho1 * Z * br *
                                             cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
@@ -4659,7 +4666,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                             PROGET_CC_OTHER_NU_NEUTRON :
                                             PROGET_CC_OTHER_NU_BAR_NEUTRON;
                                         ancestor_v[np] = npid;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho0 * N * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4672,7 +4679,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                             PROGET_CC_OTHER_NU_PROTON :
                                             PROGET_CC_OTHER_NU_BAR_PROTON;
                                         ancestor_v[np] = npid;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho0 * Z * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4696,7 +4703,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                             PROGET_CC_TOP_NU_NEUTRON :
                                             PROGET_CC_TOP_NU_BAR_NEUTRON;
                                         ancestor_v[np] = npid;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho0 * N * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4709,7 +4716,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                             PROGET_CC_TOP_NU_PROTON :
                                             PROGET_CC_TOP_NU_BAR_PROTON;
                                         ancestor_v[np] = npid;
-                                        p[np] = (np ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho0 * Z * cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
                                                 p1, p2);
@@ -4755,7 +4762,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                                 ancestor_v[np] =
                                                     ENT_PID_TOP;
                                         }
-                                        p[np] = (np > 0 ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho1 * N * br *
                                             cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
@@ -4776,7 +4783,7 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                                 ancestor_v[np] =
                                                     ENT_PID_TOP;
                                         }
-                                        p[np] = (np > 0 ? p[np - 1] : 0.) +
+                                        p[np] =
                                             rho1 * Z * br *
                                             cross_section_compute(
                                                 mode, proget_v[np], cs0, cs1,
