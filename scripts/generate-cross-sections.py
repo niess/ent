@@ -228,7 +228,7 @@ def build_table(model):
 #              proton      neutron     proton      neutron      proton      neutron     proton      neutron
 #------------------------------------------------------------------------------------------------------------
 """)
-        energies = numpy.logspace(2, 12, 201)
+        energies = numpy.logspace(2, 12, 301)
         pb = 1E-40 # pb -> m^2
         fmt = " ".join(4 * ("{:.5E}",))
         fmt = "  ".join(("{:.5E}", fmt, fmt)) + os.linesep
