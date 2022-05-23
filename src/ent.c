@@ -83,7 +83,7 @@
 #define ENT_FORMAT_TAG "/ent/"
 
 /* ENT data format version. */
-#define ENT_FORMAT_VERSION 3
+#define ENT_FORMAT_VERSION 4
 
 /* Indices for Physics processes with a specific projectile and target. */
 enum proget_index {
@@ -320,6 +320,7 @@ const char * ent_error_function(ent_function_t * caller)
         REGISTER_FUNCTION(ent_physics_create);
         REGISTER_FUNCTION(ent_physics_cross_section);
         REGISTER_FUNCTION(ent_physics_dcs);
+        REGISTER_FUNCTION(ent_physics_dump);
         REGISTER_FUNCTION(ent_physics_sf);
         REGISTER_FUNCTION(ent_physics_pdf);
         REGISTER_FUNCTION(ent_collide);
@@ -655,6 +656,38 @@ error:
         return rc;
 }
 
+/* Dump a single grid in ENT format. */
+static enum ent_return grid_dump(const struct grid * grid, FILE * stream)
+{
+#define DUMP_VECTOR(FIELD, SIZE)                                               \
+        (fwrite(grid -> FIELD, sizeof(*grid -> FIELD), SIZE, stream) != (SIZE))
+
+#define DUMP_SCALAR(FIELD)                                                     \
+        (fwrite(&grid -> FIELD, sizeof(grid -> FIELD), 1, stream) != 1)
+
+        /* Dump binary header. */
+        if (DUMP_SCALAR(nx) || DUMP_SCALAR(nQ2) || DUMP_SCALAR(nf))
+        {
+                return ENT_RETURN_IO_ERROR;
+        }
+
+        /* Dump the grid data. */
+        const int nr = grid->nf * grid->nx * grid->nQ2;
+        if (DUMP_VECTOR(x, grid->nx) ||
+            DUMP_VECTOR(Q2, grid->nQ2) ||
+            DUMP_VECTOR(f, nr))
+        {
+                return ENT_RETURN_IO_ERROR;
+        }
+
+        /* N.B.: Lambda exponents are dumped separately. */
+
+        return ENT_RETURN_SUCCESS;
+
+#undef DUMP_VECTOR
+#undef DUMP_SCALAR
+}
+
 /* Recursive bracketing of a table value, using a dichotomy. */
 static void table_bracket(const float * table, float value, int * p1, int * p2)
 {
@@ -744,7 +777,7 @@ static double rest_mass(enum ent_pid pid);
 
 /* Load DIS physics from an ENT file. */
 static enum ent_return physics_load(
-    struct ent_physics ** physics, FILE * stream)
+    struct ent_physics ** physics, FILE * stream, int * tabulate)
 {
         *physics = NULL;
         enum ent_return rc;
@@ -831,6 +864,53 @@ static enum ent_return physics_load(
                 if ((*physics)->mteff[i] > mtmax) mtmax = (*physics)->mteff[i];
         }
         (*physics)->mteff[4] = mtmax;
+
+        /* Check for extra data. */
+        if (fgetc(stream) == 0x0) {
+                *tabulate = 1;
+                return ENT_RETURN_SUCCESS;
+        } else {
+                *tabulate = 0;
+        }
+
+        /* Load lambda exponents. */
+        for (i = 0; i < PROGET_N_DIS; i++) {
+                const struct grid * const g = (*physics)->sf[i];
+                if (fread(g->lambda, sizeof(*g->lambda), g->nx, stream) !=
+                    g->nx) {
+                        rc = ENT_RETURN_FORMAT_ERROR;
+                        goto error;
+                }
+        }
+
+        /* Load tables. */
+#define LOAD_VECTOR(FIELD, SIZE)                                               \
+        (fread((*physics) -> FIELD, sizeof(*(*physics) -> FIELD), SIZE,        \
+         stream) != (SIZE))
+
+#define LOAD_SCALAR(FIELD)                                                     \
+        (fwrite(&(*physics) -> FIELD, sizeof((*physics) -> FIELD), 1, stream)  \
+         != 1)
+
+        const int np = PROGET_N - 1;
+        const int nk = np * ENERGY_N;
+        const int nl = PROGET_N_DIS * ENERGY_N * DIS_Y_N;
+        const int ny = 2 * PROGET_N_DIS * ENERGY_N;
+
+        if (LOAD_VECTOR(cs_k, nk) ||
+            LOAD_VECTOR(cs_t, nk) ||
+            LOAD_VECTOR(dis_pdf, nl) ||
+            LOAD_VECTOR(dis_cdf, nl) ||
+            LOAD_VECTOR(dis_xlim, 3 * nl) ||
+            LOAD_VECTOR(dis_ylim_f, ny) ||
+            LOAD_VECTOR(dis_ylim_b, ny) ||
+            LOAD_VECTOR(dis_ylim_h, ny) ||
+            LOAD_SCALAR(dis_Q2min) ||
+            LOAD_SCALAR(dis_Q2max))
+        {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto error;
+        }
 
         return ENT_RETURN_SUCCESS;
 error:
@@ -2256,7 +2336,7 @@ static enum ent_return cs_load(FILE * stream, struct ent_physics * physics)
 
 /* API constructor for a Physics object. */
 enum ent_return ent_physics_create(struct ent_physics ** physics,
-    const char * pdf_or_sf_file, const char * cs_file)
+    const char * data_file, const char * cs_file)
 {
         ENT_ACKNOWLEDGE(ent_physics_create);
 
@@ -2266,13 +2346,15 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
         /* Load DIS SFs or PDFs. */
         FILE * stream;
         rc = ENT_RETURN_PATH_ERROR;
-        if ((stream = fopen(pdf_or_sf_file, "rb")) == NULL) goto exit;
+        if ((stream = fopen(data_file, "rb")) == NULL) goto exit;
 
+        int tabulate = 1;
         char tag[sizeof(ENT_FORMAT_TAG)] = {0x0};
         fread(tag, sizeof(tag) - 1, 1, stream);
         if (strcmp(tag, ENT_FORMAT_TAG) == 0) {
                 /* This is an ENT file. */
-                if ((rc = physics_load(physics, stream)) != ENT_RETURN_SUCCESS)
+                if ((rc = physics_load(physics, stream, &tabulate)) !=
+                    ENT_RETURN_SUCCESS)
                         goto exit;
         } else {
                 /* This must be a PDF file in LHA format. */
@@ -2284,9 +2366,11 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
         stream = NULL;
 
         /* Build physics tabulations. */
-        rc = ENT_RETURN_SUCCESS;
-        physics_tabulate(*physics);
+        if (tabulate) {
+                physics_tabulate(*physics);
+        }
 
+        rc = ENT_RETURN_SUCCESS;
         if (cs_file != NULL) {
                 /* Use provided cross-sections for the transport. */
                 rc = ENT_RETURN_PATH_ERROR;
@@ -2326,6 +2410,100 @@ void ent_physics_destroy(struct ent_physics ** physics)
 
         free(*physics);
         *physics = NULL;
+}
+
+enum ent_return ent_physics_dump(
+    const struct ent_physics * physics, const char * outfile)
+{
+        ENT_ACKNOWLEDGE(ent_physics_dump);
+
+        FILE * stream = fopen(outfile, "wb");
+        if (stream == NULL) {
+                ENT_RETURN(ENT_RETURN_PATH_ERROR);
+        }
+
+        enum ent_return rc = ENT_RETURN_SUCCESS;
+
+        if (fprintf(stream, "%s%d/", ENT_FORMAT_TAG, ENT_FORMAT_VERSION) <
+            sizeof(ENT_FORMAT_TAG)) {
+                rc = ENT_RETURN_IO_ERROR;
+                goto exit;
+        }
+
+        /* XXX Copy & dump meta-data. */
+        if (fputc(0x0, stream) < 0) {
+                rc = ENT_RETURN_IO_ERROR;
+                goto exit;
+        }
+
+        /* Dump SF data. */
+        int i;
+        for (i = 0; i < PROGET_N_DIS; i++) {
+                if ((i != PROGET_NC_NU_BAR_NEUTRON) &&
+                    (i != PROGET_NC_NU_BAR_PROTON)) {
+                        if ((rc = grid_dump(physics->sf[i], stream)) !=
+                            ENT_RETURN_SUCCESS) {
+                                goto exit;
+                        }
+                }
+        }
+
+        /* Dump top thresholds. */
+        if (fwrite(physics->mteff, sizeof(*physics->mteff), 4, stream) != 4) {
+                rc = ENT_RETURN_IO_ERROR;
+                goto exit;
+        }
+
+        /* Dump continuation tag. */
+        if (fputc(0x1, stream) < 0) {
+                rc = ENT_RETURN_IO_ERROR;
+                goto exit;
+        }
+
+        /* Dump lambda exponents. */
+        for (i = 0; i < PROGET_N_DIS; i++) {
+                const struct grid * const g = physics->sf[i];
+                if (fwrite(g->lambda, sizeof(*g->lambda), g->nx, stream) !=
+                    g->nx) {
+                        rc = ENT_RETURN_IO_ERROR;
+                        goto exit;
+                }
+        }
+
+        /* Dump tables. */
+#define DUMP_VECTOR(FIELD, SIZE)                                               \
+        (fwrite(physics -> FIELD, sizeof(*physics -> FIELD), SIZE, stream) !=  \
+         (SIZE))
+
+#define DUMP_SCALAR(FIELD)                                                     \
+        (fwrite(&physics -> FIELD, sizeof(physics -> FIELD), 1, stream) != 1)
+
+        const int np = PROGET_N - 1;
+        const int nk = np * ENERGY_N;
+        const int nl = PROGET_N_DIS * ENERGY_N * DIS_Y_N;
+        const int ny = 2 * PROGET_N_DIS * ENERGY_N;
+
+        if (DUMP_VECTOR(cs_k, nk) ||
+            DUMP_VECTOR(cs_t, nk) ||
+            DUMP_VECTOR(dis_pdf, nl) ||
+            DUMP_VECTOR(dis_cdf, nl) ||
+            DUMP_VECTOR(dis_xlim, 3 * nl) ||
+            DUMP_VECTOR(dis_ylim_f, ny) ||
+            DUMP_VECTOR(dis_ylim_b, ny) ||
+            DUMP_VECTOR(dis_ylim_h, ny) ||
+            DUMP_SCALAR(dis_Q2min) ||
+            DUMP_SCALAR(dis_Q2max))
+        {
+                rc = ENT_RETURN_IO_ERROR;
+                goto exit;
+        }
+
+#undef DUMP_VECTOR
+#undef DUMP_SCALAR
+
+exit:
+        if (stream != NULL) fclose(stream);
+        ENT_RETURN(rc);
 }
 
 static enum ent_return transport_cross_section(struct ent_physics * physics,

@@ -357,26 +357,26 @@ struct ent_state {
 };
 
 /**
- * Create a new Physics environment.
+ * Create a new physics environment.
  *
- * @param physics     A handle for the Physics environment.
- * @param pdf_or_sf   The PDFs or SFs for DIS.
+ * @param physics     A handle for the physics environment.
+ * @param data        Physics data (PDFs, SFs for DIS or a physics dump).
  * @param cs          A cross-section file, for DIS processes, or `NULL`.
  * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
  * code is returned as detailed below.
  *
- * Create a new Physics environment conforming to the Standard Model of Particle
- * Physics and according to the given tabulations of Parton Distribution
- * Functions (PDFs), or directly from DIS Structure Functions (SFs). If PDFs are
+ * Create a new physics environment according to the given physics data. Those
+ * can be Parton Distribution Functions (PDFs), DIS Structure Functions (SFs) or
+ * a previous physics dump generated with `ent_physics_dump`. If PDFs are
  * provided, then DIS SFs are computed by ENT using LO expressions.
  *
  * __Note__: PDFs files must be in Les Houches Accord (LHA) format. Structure
- * functions are provided using an ENT specific binary format (.esf).
+ * functions are provided using an ENT specific binary format (.ent).
  *
  * If *cs* is not `NULL`, then it must point to file containing cross-section
  * values for DIS processes. ENT's cross-sections are re-scaled accordingly.
- * Otherwise, ENT's cross-sections for DIS processes are computed from the
- * SFs.
+ * Otherwise, ENT's cross-sections for DIS processes are computed from physics
+ * data.
  *
  * __Error codes__
  *
@@ -387,21 +387,40 @@ struct ent_state {
  *     ENT_RETURN_PATH_ERROR      An input file could not be found/opened.
  */
 enum ent_return ent_physics_create(
-    struct ent_physics ** physics, const char * pdf_or_sf, const char * cs);
+    struct ent_physics ** physics, const char * data, const char * cs);
 
 /**
- * Destroy a Physics environment.
+ * Destroy a physics environment.
  *
- * @param physics    A handle for the Physics.
+ * @param physics    A handle for the physics.
  *
  * Release the allocated memory. On exit _physics_ is set to `NULL`.
  */
 void ent_physics_destroy(struct ent_physics ** physics);
 
 /**
+ * Dump physics data to a file.
+ *
+ * @param physics    A handle for the physics.
+ * @param outfile    File where to dump the physics data.
+ *
+ * Dump physics data to a file using an ENT specific binary format (.ent). New
+ * physics instances can be created directly from these data, using
+ * `ent_physics_create`. This allows for faster initialisation.
+ *
+ * __Error codes__
+ *
+ *     ENT_RETURN_IO_ERROR        Could not write to output file.
+ *
+ *     ENT_RETURN_PATH_ERROR      The output file could not be found/opened.
+ */
+enum ent_return ent_physics_dump(
+    const struct ent_physics * physics, const char * outfile);
+
+/**
  * The total or process specific cross-section.
  *
- * @param physics          A handle for the Physics.
+ * @param physics          A handle for the physics.
  * @param projectile       The incoming projectile.
  * @param energy           The projectile total energy.
  * @param Z                The target charge number.
@@ -426,7 +445,7 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
 /**
  * Compute a DCS.
  *
- * @param physics       A handle for the Physics.
+ * @param physics       A handle for the physics.
  * @param projectile    The incoming projectile.
  * @param energy        The projectile total energy.
  * @param Z             The target charge number.
@@ -453,7 +472,7 @@ enum ent_return ent_physics_dcs(struct ent_physics * physics,
 /**
 * Compute a PDF.
 *
-* @param physics    A handle for the Physics.
+* @param physics    A handle for the physics.
 * @param parton     The parton of interest.
 * @param x          The Bjorken _x_ fraction.
 * @param q2         The squared momentum transfer.
@@ -476,7 +495,7 @@ enum ent_return ent_physics_pdf(struct ent_physics * physics,
 /**
 * Compute Structure Functions.
 *
-* @param physics    A handle for the Physics.
+* @param physics    A handle for the physics.
 * @param projectile The projectile PID.
 * @param target     The target PID.
 * @param process    The DIS process.
@@ -526,7 +545,7 @@ enum ent_event {
 /**
  * Simulate a Monte-Carlo collision.
  *
- * @param physics    A handle for the Physics.
+ * @param physics    A handle for the physics.
  * @param context    The Monte-Carlo simulation context.
  * @param state      The initial / final state of the tracked particle.
  * @param medium     The target medium.
@@ -552,7 +571,7 @@ enum ent_return ent_collide(struct ent_physics * physics,
 /**
  * Perform a Monte-Carlo transport.
  *
- * @param physics    A handle for the Physics or `NULL`.
+ * @param physics    A handle for the physics or `NULL`.
  * @param context    The Monte-Carlo simulation context.
  * @param state      The initial / final state of the tracked particle.
  * @param products   Additional interaction product(s), or `NULL` if not
