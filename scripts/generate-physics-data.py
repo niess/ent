@@ -184,9 +184,14 @@ def initialise_ent():
     # Load the library
     lib = ffi.dlopen("lib/libent.so")
 
-    return ffi, lib
+    # Get the library version
+    index = ffi.new("int [3]")
+    lib.ent_version(index, index + 1, index + 2)
+    version = f"{int(index[0])}.{int(index[1])}.{int(index[2])}"
 
-ffi, lib = initialise_ent()
+    return ffi, lib, version
+
+ffi, lib, version = initialise_ent()
 
 
 def interpolate_cross_section(model):
@@ -224,7 +229,7 @@ def build_cross_section_table(model):
     with open(f"share/ent/{model}-cross-section.txt", "w+") as f:
         f.write(f"""# {model} cross-section
 #
-# Generated using ENT.
+# Generated using ENT v{version}.
 #
 # Reference:
 #    {references[model]}
@@ -283,12 +288,19 @@ def build_physics_data(model):
                            f"share/ent/{model}-sf.ent".encode(),
                            f"share/ent/{model}-cross-section.txt".encode())
 
-    dis_metadata = ffi.string(lib.ent_physics_metadata(physics[0])).decode()
+    tmp = ffi.string(lib.ent_physics_metadata(physics[0])).decode().split("\n")
+    dis_header = tmp[1][2:]
+    dis_metadata = "\n".join(tmp[3:])
+
     metadata = f"""
-# ENT physics data using {model} cross-section
+# ENT physics data
 #
-# Reference:
-#    {references[model]}
+# Generated using ENT v{version} and {model} cross-section.
+# {dis_header}.
+#
+# References:
+#    [{model}]: {references[model]}
+
 {dis_metadata}"""
 
     os.makedirs("share/physics", exist_ok=True)

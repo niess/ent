@@ -1,6 +1,6 @@
 # CMS11 cross-section
 #
-# Generated using ENT.
+# Generated using ENT v0.8.0.
 #
 # Reference:
 #    https://arxiv.org/abs/1106.3723

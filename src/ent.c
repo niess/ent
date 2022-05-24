@@ -79,6 +79,11 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* ENT library version. */
+#define ENT_VERSION_MAJOR 0
+#define ENT_VERSION_MINOR 8
+#define ENT_VERSION_PATCH 0
+
 /* ENT data format tag. */
 #define ENT_FORMAT_TAG "/ent/"
 
@@ -5387,6 +5392,14 @@ enum ent_return ent_transport(struct ent_physics * physics,
 exit:
         if (event != NULL) *event = event_;
         ENT_RETURN(rc);
+}
+
+/* API function for getting ENT library version. */
+void ent_version(int * major, int * minor, int * patch)
+{
+        if (major != NULL) *major = ENT_VERSION_MAJOR;
+        if (minor != NULL) *minor = ENT_VERSION_MINOR;
+        if (patch != NULL) *patch = ENT_VERSION_PATCH;
 }
 
 #if (_USE_GDB)

@@ -57,6 +57,8 @@ class MetaData(NamedTuple):
         with open(path, "wb+") as f:
             f.write(f"{FORMAT_TAG}{FORMAT_VERSION}/".encode())
             f.write(f"""
+# DIS SFs computed using APFEL v{apfel.GetVersion()}
+
 - pdf     :  {self.pdf}
 - member  :  {self.member}
 - scheme  :  {self.scheme}

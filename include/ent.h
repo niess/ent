@@ -667,6 +667,18 @@ void ent_error_handler_set(ent_handler_cb * handler);
  */
 ent_handler_cb * ent_error_handler_get();
 
+/**
+ * Get ENT library version.
+ *
+ * @param major    The major version index, or `NULL`.
+ * @param minor    The minor version index, or `NULL`.
+ * @param patch    The patch version index, or `NULL`.
+ *
+ * Get ENT library version as MJOR.MINOR.PATCH. If an index is not required,
+ * then a `NULL` pointer can be provided for the corresponding parameter.
+ */
+void ent_version(int * major, int * minor, int * patch);
+
 #ifdef __cplusplus
 }
 #endif
