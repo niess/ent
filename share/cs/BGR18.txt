@@ -3,7 +3,7 @@
 # Generated using ENT.
 #
 # Reference:
-#    https://arxiv.org/abs/1106.3723
+#    https://arxiv.org/abs/1808.02034
 #
 #------------------------------------------------------------------------------------------------------------
 #  energy                 neutrino xsec (m^2)                            anti-neutrino xsec (m^2)

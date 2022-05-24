@@ -83,7 +83,7 @@
 #define ENT_FORMAT_TAG "/ent/"
 
 /* ENT data format version. */
-#define ENT_FORMAT_VERSION 4
+#define ENT_FORMAT_VERSION 5
 
 /* Indices for Physics processes with a specific projectile and target. */
 enum proget_index {
@@ -331,6 +331,7 @@ const char * ent_error_function(ent_function_t * caller)
 
         /* Other API functions. */
         REGISTER_FUNCTION(ent_physics_destroy);
+        REGISTER_FUNCTION(ent_physics_metadata);
         REGISTER_FUNCTION(ent_error_string);
         REGISTER_FUNCTION(ent_error_print);
         REGISTER_FUNCTION(ent_error_function);
@@ -605,7 +606,7 @@ static enum ent_return grid_compute_lambda(struct grid * g, int * freeze)
 
 /* Load a single grid in ENT format. */
 static enum ent_return grid_load(
-    struct grid ** g_ptr, FILE * stream, int * freeze)
+    struct grid ** g_ptr, FILE * stream, int tabulate, int * freeze)
 {
         struct grid * g = NULL;
         enum ent_return rc;
@@ -644,8 +645,11 @@ static enum ent_return grid_load(
         }
 
         /* Compute lambda exponents. */
-        if ((rc = grid_compute_lambda(g, freeze)) != ENT_RETURN_SUCCESS) {
-                goto error;
+        if (tabulate) {
+                if ((rc = grid_compute_lambda(g, freeze)) !=
+                    ENT_RETURN_SUCCESS) {
+                        goto error;
+                }
         }
 
         /* Register the table and return. */
@@ -820,6 +824,13 @@ static enum ent_return physics_load(
                 }
         }
 
+        /* Check continuation tag. */
+        if (fgetc(stream) == 0x0) {
+                *tabulate = 1;
+        } else {
+                *tabulate = 0;
+        }
+
         /* Create the physics wrapper. */
         *physics = physics_create();
         if (*physics == NULL) {
@@ -861,13 +872,16 @@ static enum ent_return physics_load(
                         }
 
                         /* Compute lambda exponents. */
-                        if ((rc = grid_compute_lambda(
-                            (*physics)->sf[i], NULL)) != ENT_RETURN_SUCCESS) {
-                                goto error;
+                        if (*tabulate) {
+                                if ((rc = grid_compute_lambda(
+                                    (*physics)->sf[i], NULL)) !=
+                                    ENT_RETURN_SUCCESS) {
+                                        goto error;
+                                }
                         }
                 } else {
                         if ((rc = grid_load((*physics)->sf + i, stream,
-                            NULL)) !=
+                            *tabulate, NULL)) !=
                             ENT_RETURN_SUCCESS) {
                                 goto error;
                         }
@@ -888,19 +902,15 @@ static enum ent_return physics_load(
         }
         (*physics)->mteff[4] = mtmax;
 
-        /* Check for extra data. */
-        if (fgetc(stream) == 0x0) {
-                *tabulate = 1;
+        if (*tabulate) {
                 return ENT_RETURN_SUCCESS;
-        } else {
-                *tabulate = 0;
         }
 
         /* Load lambda exponents. */
         for (i = 0; i < PROGET_N_DIS; i++) {
                 const struct grid * const g = (*physics)->sf[i];
-                if (fread(g->lambda, sizeof(*g->lambda), g->nx, stream) !=
-                    g->nx) {
+                const int nlb = g->nf * g->nQ2;
+                if (fread(g->lambda, sizeof(*g->lambda), nlb, stream) != nlb) {
                         rc = ENT_RETURN_FORMAT_ERROR;
                         goto error;
                 }
@@ -912,7 +922,7 @@ static enum ent_return physics_load(
          stream) != (SIZE))
 
 #define LOAD_SCALAR(FIELD)                                                     \
-        (fwrite(&(*physics) -> FIELD, sizeof((*physics) -> FIELD), 1, stream)  \
+        (fread(&(*physics) -> FIELD, sizeof((*physics) -> FIELD), 1, stream)   \
          != 1)
 
         const int np = PROGET_N - 1;
@@ -2480,6 +2490,12 @@ enum ent_return ent_physics_dump(const struct ent_physics * physics,
                 }
         }
 
+        /* Dump continuation tag. */
+        if (fputc(0x1, stream) < 0) {
+                rc = ENT_RETURN_IO_ERROR;
+                goto exit;
+        }
+
         /* Dump SF data. */
         int i;
         for (i = 0; i < PROGET_N_DIS; i++) {
@@ -2498,17 +2514,11 @@ enum ent_return ent_physics_dump(const struct ent_physics * physics,
                 goto exit;
         }
 
-        /* Dump continuation tag. */
-        if (fputc(0x1, stream) < 0) {
-                rc = ENT_RETURN_IO_ERROR;
-                goto exit;
-        }
-
         /* Dump lambda exponents. */
         for (i = 0; i < PROGET_N_DIS; i++) {
                 const struct grid * const g = physics->sf[i];
-                if (fwrite(g->lambda, sizeof(*g->lambda), g->nx, stream) !=
-                    g->nx) {
+                const int nlb = g->nf * g->nQ2;
+                if (fwrite(g->lambda, sizeof(*g->lambda), nlb, stream) != nlb) {
                         rc = ENT_RETURN_IO_ERROR;
                         goto exit;
                 }

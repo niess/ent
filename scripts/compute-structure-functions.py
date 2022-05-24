@@ -19,7 +19,7 @@ import lhapdf
 FORMAT_TAG = "/ent/"
 
 """ENT data format version"""
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 
 
 """Physics constants"""
@@ -68,7 +68,7 @@ class MetaData(NamedTuple):
 - Q2min   :  {self.Q2min:.5E}
 - Q2max   :  {self.Q2max:.5E}
 """.encode())
-            f.write(b"\0")
+            f.write(b"\0\0")
 
 
 class Contribution(IntEnum):
@@ -277,10 +277,6 @@ def compute_sf():
     top_threshold = numpy.array((0, mteff, 0, mteff), dtype='f8')
     with open(outfile, "ab") as f:
         f.write(top_threshold.tobytes())
-
-    # Dump end tag
-    with open(outfile, "ab") as f:
-        f.write(b"\0")
 
 
 if __name__ == "__main__":

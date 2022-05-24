@@ -8,6 +8,13 @@ import re
 from scipy.interpolate import PchipInterpolator
 
 
+# Cross-section references
+references = {
+    "CMS11" : "https://arxiv.org/abs/1106.3723",
+    "BGR18" : "https://arxiv.org/abs/1808.02034"
+}
+
+
 def cross_section_CMS11():
     """CMS11 cross-section
 
@@ -195,7 +202,7 @@ def interpolate_cross_section(model):
     return p00, p01, p10, p11
 
 
-def build_table(model):
+def build_cross_section_table(model):
     """Build the cross-section tabulation, for ENT
     """
 
@@ -220,7 +227,7 @@ def build_table(model):
 # Generated using ENT.
 #
 # Reference:
-#    https://arxiv.org/abs/1106.3723
+#    {references[model]}
 #
 #------------------------------------------------------------------------------------------------------------
 #  energy                 neutrino xsec (m^2)                            anti-neutrino xsec (m^2)
@@ -266,6 +273,36 @@ def build_table(model):
     lib.ent_physics_destroy(physics)
 
 
+def build_physics_data(model):
+    """Build physics data, for ENT
+    """
+
+    # Create the physics
+    physics = ffi.new("struct ent_physics *[1]")
+    lib.ent_physics_create(physics,
+                           f"share/sf/{model}.ent".encode(),
+                           f"share/cs/{model}.ent".encode())
+
+    dis_metadata = ffi.string(lib.ent_physics_metadata(physics[0])).decode()
+    metadata = f"""
+# ENT physics data using {model} cross-section
+#
+# Reference:
+#    {references[model]}
+{dis_metadata}"""
+
+    os.makedirs("share/physics", exist_ok=True)
+    lib.ent_physics_dump(physics[0],
+                         metadata.encode(),
+                         f"share/physics/{model}.ent".encode())
+
+    lib.ent_physics_destroy(physics)
+
+
 if __name__ == "__main__":
-    build_table("CMS11")
-    build_table("BGR18")
+    for model in ("CMS11", "BGR18"):
+        print(f"building cross-section table for {model}")
+        build_cross_section_table(model)
+
+        print(f"building physics data for {model}")
+        build_physics_data(model)
