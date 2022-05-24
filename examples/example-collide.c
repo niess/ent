@@ -26,21 +26,6 @@
 /* The ENT API. */
 #include "ent.h"
 
-/* Handle the Physics. */
-static struct ent_physics * physics = NULL;
-
-/* Error handler: dump any error message and exit to the OS. */
-static void handle_error(enum ent_return rc, ent_function_t * caller)
-{
-        /* Dump an error message. */
-        ent_error_print(stderr, rc, caller, "\t", "\n");
-        fprintf(stderr, "\n");
-
-        /* Finalise and exit to the OS. */
-        ent_physics_destroy(&physics);
-        exit(EXIT_FAILURE);
-}
-
 /* Uniform distribution over [0,1]. */
 static double random(struct ent_context * context)
 {
@@ -58,10 +43,8 @@ int main(int nargc, char * argv[])
         double A = (nargc > 5) ? atof(argv[5]) : 1.;
         int events = (nargc > 6) ? atoi(argv[6]) : 10000;
 
-        /* Register the error handler for ENT library functions. */
-        ent_error_handler_set(&handle_error);
-
         /* Create the physics using a data dump. */
+        struct ent_physics * physics;
         ent_physics_create(&physics, "share/ent/CMS11-physics.ent");
 
         /* Compute the DCS by numeric integration. */

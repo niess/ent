@@ -348,8 +348,19 @@ const char * ent_error_function(ent_function_t * caller)
 #undef REGISTER_FUNCTION
 }
 
-/* The user supplied error handler, if any. */
-static ent_handler_cb * _handler = NULL;
+/* Default error handler: dump any error message and exit to the OS. */
+static void default_error_handler(enum ent_return rc, ent_function_t * caller)
+{
+        /* Dump an error message. */
+        ent_error_print(stderr, rc, caller, "\t", "\n");
+        fprintf(stderr, "\n");
+
+        /* Exit to the OS. */
+        exit(EXIT_FAILURE);
+}
+
+/* The current error handler, if any. */
+static ent_handler_cb * _handler = &default_error_handler;
 
 /* Getter for the error handler. */
 ent_handler_cb * ent_error_handler_get(void) { return _handler; }

@@ -25,21 +25,6 @@
 /* The ENT API. */
 #include "ent.h"
 
-/* Handle the Physics. */
-static struct ent_physics * physics = NULL;
-
-/* Error handler: dump any error message and exit to the OS. */
-static void handle_error(enum ent_return rc, ent_function_t * caller)
-{
-        /* Dump an error message. */
-        ent_error_print(stderr, rc, caller, "\t", "\n");
-        fprintf(stderr, "\n");
-
-        /* Finalise and exit to the OS. */
-        ent_physics_destroy(&physics);
-        exit(EXIT_FAILURE);
-}
-
 /* Density callback with a uniform density. */
 static double density(
     struct ent_medium * medium, struct ent_state * state, double * density)
@@ -72,10 +57,8 @@ int main(int nargc, char * argv[])
         double depth = (nargc > 3) ? atof(argv[3]) : 6400E+03;
         int events = (nargc > 4) ? atoi(argv[4]) : 10000;
 
-        /* Register the error handler for ENT library functions. */
-        ent_error_handler_set(&handle_error);
-
         /* Create the physics using a data dump. */
+        struct ent_physics * physics;
         ent_physics_create(&physics, "share/ent/BGR18-physics.ent");
 
         /* Instanciate a new simulation context. */

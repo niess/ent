@@ -672,6 +672,9 @@ void ent_error_print(FILE * stream, enum ent_return code,
  * Set the error handler callback for ENT library functions. If *handler* is
  * set to `NULL` error callbacks are disabled.
  *
+ * __Note__: By default, library errors are printed to *stderr*, and a system
+ * exit is issued.
+ *
  * __Warnings__
  *
  * The error handler is thread local.
@@ -682,6 +685,10 @@ void ent_error_handler_set(ent_handler_cb * handler);
  * Get the current error handler.
  *
  * @return The current error handler or `NULL` if none.
+ *
+ * __Note__: By default, library errors are printed to *stderr*, and a system
+ * exit is issued. This can be disabled, e.g. by setting the error handler to
+ * `NULL`.
  *
  * __Warnings__
  *

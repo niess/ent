@@ -26,21 +26,6 @@
 /* The ENT API. */
 #include "ent.h"
 
-/* Handle the Physics. */
-static struct ent_physics * physics = NULL;
-
-/* Error handler: dump any error message and exit to the OS. */
-static void handle_error(enum ent_return rc, ent_function_t * caller)
-{
-        /* Dump an error message. */
-        ent_error_print(stderr, rc, caller, "\t", "\n");
-        fprintf(stderr, "\n");
-
-        /* Finalise and exit to the OS. */
-        ent_physics_destroy(&physics);
-        exit(EXIT_FAILURE);
-}
-
 int main(int nargc, char * argv[])
 {
         /* Parse the input arguments. */
@@ -50,10 +35,8 @@ int main(int nargc, char * argv[])
         double Z = (nargc > 3) ? atof(argv[3]) : 0.5;
         double A = (nargc > 4) ? atof(argv[4]) : 1.;
 
-        /* Register the error handler for ENT library functions. */
-        ent_error_handler_set(&handle_error);
-
         /* Create the physics using DIS SFs data. */
+        struct ent_physics * physics;
         ent_physics_create(&physics, "share/ent/BGR18-sf.ent");
 
         /* Get the total cross-section. */
