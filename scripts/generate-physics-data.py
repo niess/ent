@@ -209,7 +209,7 @@ def build_cross_section_table(model):
     # Create the physics
     physics = ffi.new("struct ent_physics *[1]")
     lib.ent_physics_create(
-        physics, f"share/sf/{model}.ent".encode(), ffi.NULL)
+        physics, f"share/ent/{model}-sf.ent".encode(), ffi.NULL)
 
     def cross_section(projectile, energy, Z, A, process):
         cs = ffi.new("double [1]")
@@ -221,7 +221,7 @@ def build_cross_section_table(model):
         globals()[f"cross_section_{model}"]
     )
 
-    with open(f"share/cs/{model}.txt", "w+") as f:
+    with open(f"share/ent/{model}-cross-section.txt", "w+") as f:
         f.write(f"""# {model} cross-section
 #
 # Generated using ENT.
@@ -280,8 +280,8 @@ def build_physics_data(model):
     # Create the physics
     physics = ffi.new("struct ent_physics *[1]")
     lib.ent_physics_create(physics,
-                           f"share/sf/{model}.ent".encode(),
-                           f"share/cs/{model}.ent".encode())
+                           f"share/ent/{model}-sf.ent".encode(),
+                           f"share/ent/{model}-cross-section.txt".encode())
 
     dis_metadata = ffi.string(lib.ent_physics_metadata(physics[0])).decode()
     metadata = f"""
@@ -294,7 +294,7 @@ def build_physics_data(model):
     os.makedirs("share/physics", exist_ok=True)
     lib.ent_physics_dump(physics[0],
                          metadata.encode(),
-                         f"share/physics/{model}.ent".encode())
+                         f"share/ent/{model}-physics.ent".encode())
 
     lib.ent_physics_destroy(physics)
 

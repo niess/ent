@@ -1,5 +1,6 @@
 # Ignore binaries.
 bin
 lib
+*.ent
 *.o
 *.so

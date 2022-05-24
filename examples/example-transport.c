@@ -75,9 +75,8 @@ int main(int nargc, char * argv[])
         /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
 
-        /* Create the physics. */
-        ent_physics_create(
-            &physics, "share/sf/BGR18.ent", "share/cs/BGR18.txt");
+        /* Create the physics using a data dump. */
+        ent_physics_create(&physics, "share/ent/BGR18-physics.ent", NULL);
 
         /* Instanciate a new simulation context. */
         struct ent_context context = { &medium, &random, NULL, NULL, depth };

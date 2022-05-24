@@ -61,9 +61,8 @@ int main(int nargc, char * argv[])
         /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
 
-        /* Create the physics. */
-        ent_physics_create(
-            &physics, "share/sf/CMS11.ent", "share/cs/CMS11.txt");
+        /* Create the physics using a data dump. */
+        ent_physics_create(&physics, "share/ent/CMS11-physics.ent", NULL);
 
         /* Compute the DCS by numeric integration. */
         const double ymin = 1E-07;

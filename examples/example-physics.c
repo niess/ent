@@ -53,8 +53,8 @@ int main(int nargc, char * argv[])
         /* Register the error handler for ENT library functions. */
         ent_error_handler_set(&handle_error);
 
-        /* Create the physics. */
-        ent_physics_create(&physics, "share/sf/BGR18.ent", NULL);
+        /* Create the physics using DIS SFs data. */
+        ent_physics_create(&physics, "share/ent/BGR18-sf.ent", NULL);
 
         /* Get the total cross-section. */
         const double Emin = 1E+00;

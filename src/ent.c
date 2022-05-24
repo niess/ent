@@ -2414,7 +2414,7 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
                     goto exit;
                 fclose(stream);
                 stream = NULL;
-        } else {
+        } else if (tabulate) {
                 /* Use computed cross-sections for the transport. */
                 memcpy((*physics)->cs_t, (*physics)->cs_k,
                     ENERGY_N * (PROGET_N - 1) * sizeof(*(*physics)->cs_t));
