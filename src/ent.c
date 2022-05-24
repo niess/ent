@@ -329,8 +329,9 @@ const char * ent_error_function(ent_function_t * caller)
         REGISTER_FUNCTION(ent_physics_cross_section);
         REGISTER_FUNCTION(ent_physics_dcs);
         REGISTER_FUNCTION(ent_physics_dump);
-        REGISTER_FUNCTION(ent_physics_sf);
         REGISTER_FUNCTION(ent_physics_pdf);
+        REGISTER_FUNCTION(ent_physics_rescale);
+        REGISTER_FUNCTION(ent_physics_sf);
         REGISTER_FUNCTION(ent_collide);
         REGISTER_FUNCTION(ent_transport);
 
@@ -2374,8 +2375,8 @@ static enum ent_return cs_load(FILE * stream, struct ent_physics * physics)
 }
 
 /* API constructor for a Physics object. */
-enum ent_return ent_physics_create(struct ent_physics ** physics,
-    const char * data_file, const char * cs_file)
+enum ent_return ent_physics_create(
+    struct ent_physics ** physics, const char * data_file)
 {
         ENT_ACKNOWLEDGE(ent_physics_create);
 
@@ -2407,23 +2408,13 @@ enum ent_return ent_physics_create(struct ent_physics ** physics,
         /* Build physics tabulations. */
         if (tabulate) {
                 physics_tabulate(*physics);
-        }
 
-        rc = ENT_RETURN_SUCCESS;
-        if (cs_file != NULL) {
-                /* Use provided cross-sections for the transport. */
-                rc = ENT_RETURN_PATH_ERROR;
-                if ((stream = fopen(cs_file, "r")) == NULL) goto exit;
-
-                if ((rc = cs_load(stream, *physics)) != ENT_RETURN_SUCCESS)
-                    goto exit;
-                fclose(stream);
-                stream = NULL;
-        } else if (tabulate) {
                 /* Use computed cross-sections for the transport. */
                 memcpy((*physics)->cs_t, (*physics)->cs_k,
                     ENERGY_N * (PROGET_N - 1) * sizeof(*(*physics)->cs_t));
         }
+
+        return ENT_RETURN_SUCCESS;
 
 exit:
         if (stream != NULL) fclose(stream);
@@ -2450,6 +2441,34 @@ void ent_physics_destroy(struct ent_physics ** physics)
         free((*physics)->metadata);
         free(*physics);
         *physics = NULL;
+}
+
+/* API function for rescaling physics to external cross-sections. */
+enum ent_return ent_physics_rescale(
+    struct ent_physics * physics, const char * cs_file)
+{
+        ENT_ACKNOWLEDGE(ent_physics_rescale);
+
+        FILE * stream = NULL;
+        enum ent_return rc = ENT_RETURN_SUCCESS;
+
+        if (cs_file == NULL) {
+                /* Use computed cross-sections for the transport. */
+                memcpy(physics->cs_t, physics->cs_k,
+                    ENERGY_N * (PROGET_N - 1) * sizeof(*physics->cs_t));
+        } else {
+                /* Use supplied values. */
+                if ((stream = fopen(cs_file, "r")) == NULL) {
+                        rc = ENT_RETURN_PATH_ERROR;
+                        goto exit;
+                }
+
+                rc = cs_load(stream, physics);
+        }
+
+exit:
+        if (stream != NULL) fclose(stream);
+        ENT_RETURN(rc);
 }
 
 /* API getter for physics metadata. */

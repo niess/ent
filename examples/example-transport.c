@@ -76,7 +76,7 @@ int main(int nargc, char * argv[])
         ent_error_handler_set(&handle_error);
 
         /* Create the physics using a data dump. */
-        ent_physics_create(&physics, "share/ent/BGR18-physics.ent", NULL);
+        ent_physics_create(&physics, "share/ent/BGR18-physics.ent");
 
         /* Instanciate a new simulation context. */
         struct ent_context context = { &medium, &random, NULL, NULL, depth };

@@ -54,7 +54,7 @@ int main(int nargc, char * argv[])
         ent_error_handler_set(&handle_error);
 
         /* Create the physics using DIS SFs data. */
-        ent_physics_create(&physics, "share/ent/BGR18-sf.ent", NULL);
+        ent_physics_create(&physics, "share/ent/BGR18-sf.ent");
 
         /* Get the total cross-section. */
         const double Emin = 1E+00;

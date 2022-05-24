@@ -361,7 +361,6 @@ struct ent_state {
  *
  * @param physics     A handle for the physics environment.
  * @param data        Physics data (PDFs, SFs for DIS or a physics dump).
- * @param cs          A cross-section file, for DIS processes, or `NULL`.
  * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
  * code is returned as detailed below.
  *
@@ -373,11 +372,6 @@ struct ent_state {
  * __Note__: PDFs files must be in Les Houches Accord (LHA) format. Structure
  * functions are provided using an ENT specific binary format (.ent).
  *
- * If *cs* is not `NULL`, then it must point to file containing cross-section
- * values for DIS processes. ENT's cross-sections are re-scaled accordingly.
- * Otherwise, ENT's cross-sections for DIS processes are computed from physics
- * data.
- *
  * __Error codes__
  *
  *     ENT_RETURN_FORMAT_ERROR    An input file format is not valid / supported.
@@ -387,7 +381,7 @@ struct ent_state {
  *     ENT_RETURN_PATH_ERROR      An input file could not be found/opened.
  */
 enum ent_return ent_physics_create(
-    struct ent_physics ** physics, const char * data, const char * cs);
+    struct ent_physics ** physics, const char * data);
 
 /**
  * Destroy a physics environment.
@@ -417,6 +411,34 @@ void ent_physics_destroy(struct ent_physics ** physics);
  */
 enum ent_return ent_physics_dump(const struct ent_physics * physics,
     const char * metadata, const char * outfile);
+
+/**
+ * Rescale physics to external cross-section values.
+ *
+ * @param physics     A handle for the physics environment.
+ * @param cs_file     A cross-section file, for DIS processes, or `NULL`.
+ * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+ * code is returned as detailed below.
+ *
+ * By default, ENT's cross-sections for DIS processes are computed from physics
+ * data, e.g. PDFs or SFs. This function, allows one to re-scale those to
+ * external user supplied values. If a `NULL` *cs_file* is provided, then
+ * cross-sections values are reset to internal values.
+ *
+ * __Note__: Cross-section files are provided using an ENT specific text format.
+ *
+ * __Warnings__
+ *
+ * Modifying physics data is **not** thread safe.
+ *
+ * __Error codes__
+ *
+ *     ENT_RETURN_FORMAT_ERROR    The cross-section file format is not valid.
+ *
+ *     ENT_RETURN_PATH_ERROR      The cross-section file could not be found.
+ */
+enum ent_return ent_physics_rescale(
+    struct ent_physics * physics, const char * cs_file);
 
 /**
  * Get physics meta-data.

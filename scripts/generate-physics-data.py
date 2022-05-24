@@ -213,8 +213,7 @@ def build_cross_section_table(model):
 
     # Create the physics
     physics = ffi.new("struct ent_physics *[1]")
-    lib.ent_physics_create(
-        physics, f"share/ent/{model}-sf.ent".encode(), ffi.NULL)
+    lib.ent_physics_create(physics, f"share/ent/{model}-sf.ent".encode())
 
     def cross_section(projectile, energy, Z, A, process):
         cs = ffi.new("double [1]")
@@ -284,9 +283,9 @@ def build_physics_data(model):
 
     # Create the physics
     physics = ffi.new("struct ent_physics *[1]")
-    lib.ent_physics_create(physics,
-                           f"share/ent/{model}-sf.ent".encode(),
-                           f"share/ent/{model}-cross-section.txt".encode())
+    lib.ent_physics_create(physics, f"share/ent/{model}-sf.ent".encode())
+    lib.ent_physics_rescale(physics[0],
+                            f"share/ent/{model}-cross-section.txt".encode())
 
     tmp = ffi.string(lib.ent_physics_metadata(physics[0])).decode().split("\n")
     dis_header = tmp[1][2:]
