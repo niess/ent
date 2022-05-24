@@ -23,8 +23,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* The ENT API. */
+/* The ENT library. */
 #include "ent.h"
+
 
 int main(int nargc, char * argv[])
 {
@@ -40,9 +41,9 @@ int main(int nargc, char * argv[])
         ent_physics_create(&physics, "share/ent/BGR18-sf.ent");
 
         /* Get the total cross-section. */
-        const double Emin = 1E+00;
+        const double Emin = 1E+02;
         const double Emax = 1E+12;
-        const int nE = 241;
+        const int nE = 301;
         const double lnE = log(Emax / Emin) / (nE - 1);
         int i;
         for (i = 0; i < nE; i++) {

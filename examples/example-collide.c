@@ -23,14 +23,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* The ENT API. */
+/* The ENT library. */
 #include "ent.h"
 
-/* Uniform distribution over [0,1]. */
-static double random(struct ent_context * context)
-{
-        return rand() / (double)RAND_MAX;
-}
 
 int main(int nargc, char * argv[])
 {
@@ -77,23 +72,27 @@ int main(int nargc, char * argv[])
         }
         fclose(stream);
 
-        /* Instanciate a new simulation context and target medium. */
-        struct ent_context context = { NULL, &random, NULL };
+        /* Create a new simulation context and a target medium. */
+        struct ent_context * context;
+        ent_context_create(&context);
+
         struct ent_medium medium = { Z, A };
 
-        /* Run a batch of Monte-Carlo vertices. */
+        /* Run a bunch of Monte-Carlo collisions. */
         stream = fopen("y.dat", "w+");
         for (i = 0; i < events; i++) {
                 struct ent_state neutrino = { projectile, energy, 0., 0., 1.,
                         { 0., 0., 0. }, { 0., 0., 1. } };
                 struct ent_state products[ENT_PRODUCTS_SIZE];
                 ent_collide(
-                    physics, &context, &neutrino, &medium, process, products);
+                    physics, context, &neutrino, &medium, process, products);
                 fprintf(stream, "%12.5lE\n", products[0].energy / energy);
         }
         fclose(stream);
 
         /* Finalise and exit to the OS. */
+        ent_context_destroy(&context);
         ent_physics_destroy(&physics);
+
         exit(EXIT_SUCCESS);
 }

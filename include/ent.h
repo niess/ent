@@ -314,8 +314,20 @@ typedef enum ent_return ent_stepping_cb(struct ent_context * context,
 /**
  * Data for a Monte-Carlo context.
  *
- * These are the data required by _ENT_ for describing a Monte-Carlo context.
- * The user might implement his own data structure on top of it.
+ * These are the data required by _ENT_ for describing a Monte-Carlo simulation
+ * context. This structure might be directly allocated on the stack if an
+ * external Pseudo Random Numbers Generator (PRNG) is used. In this case, the
+ * user might also implement his own data structure on top of this one.
+ * Otherwise, the `ent_context_create` function provides a simulation context
+ * packaged with a ready to use PRNG.
+ *
+ * __Note__: If an external Pseudo Random Numbers Generator (PRNG) is used,
+ * then the user must implement the corresponding *random* callback.
+ *
+ * __Warnings__
+ *
+ * A simulation context created with the `ent_context_create` library function
+ * must be destroyed using the corresponding `ent_context_destroy` function.
  */
 struct ent_context {
         /** The medium callback. */
@@ -571,6 +583,77 @@ enum ent_event {
         /** The neutrino has interacted. */
         ENT_EVENT_INTERACTION
 };
+
+/**
+ * Create a new simulation context.
+ *
+ * @param context    A handle for the simulation context.
+* @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+* code is returned as detailed below.
+ *
+ * Create a new simulation context configured with a *random* stream. A
+ * Mersennes Twister algorithm is used as Pseudo Random Numbers Generator
+ * (PRNG). The `ent_context_random_set` function allows one to (re)set the PRNG
+ * random seed.
+ *
+ * __Note__ : each simulation context manages its own independent PRNG. If an
+ * external PRNG is used, then the user can directly instanciate an
+ * `ent_context`, e.g. on the stack, instead of calling this function.
+ *
+ * __Warnings__
+ *
+ * Simulation contexts created with *ent_context_create* must be destroyed
+ * using the *ent_context_destroy* function.
+ *
+ * __Error codes__
+ *
+ *     ENT_RETURN_MEMORY_ERROR    Could not allocate memory.
+ */
+enum ent_return ent_context_create(struct ent_context ** context);
+
+/**
+ * Properly destroy a simulation context.
+ *
+ * @param context    A handle for the simulation context.
+ *
+ * __Warnings__
+ *
+ * The simulation context must have been created with *ent_context_create* in
+ * order to used this function.
+ */
+void ent_context_destroy(struct ent_context ** context);
+
+/**
+ * Get the random seed of a simulation context.
+ *
+ * @param context    A handle for the simulation context.
+ *
+ * __Note__: If no random seed has been explicitly set, using
+ * `ent_context_random_set`, then a random one is used selected from the OS
+ * entropy.
+ *
+ * __Warnings__
+ *
+ * The simulation context must have been created with *ent_context_create* in
+ * order to used this function.
+ */
+unsigned long ent_context_random_seed(struct ent_context * context);
+
+/**
+ * Set the random seed of a simulation context.
+ *
+ * @param context    A handle for the simulation context.
+ * @param seed       The random seed, or `NULL`.
+ *
+ * If a `NULL` *seed* is provided, then a random valued is used selected from
+ * the OS entropy.
+ *
+ * __Warnings__
+ *
+ * The simulation context must have been created with *ent_context_create* in
+ * order to used this function.
+ */
+void ent_context_random_set(struct ent_context * context, unsigned long * seed);
 
 /** Maximum number of collision products. */
 #define ENT_PRODUCTS_SIZE 3

@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* The ENT API. */
 #include "ent.h"
@@ -5430,6 +5431,168 @@ void ent_version(int * major, int * minor, int * patch)
         if (major != NULL) *major = ENT_VERSION_MAJOR;
         if (minor != NULL) *minor = ENT_VERSION_MINOR;
         if (patch != NULL) *patch = ENT_VERSION_PATCH;
+}
+
+/* Default simulation context including a MT PRNG. */
+struct simulation_context {
+        struct ent_context api;
+
+/* Meresenne Twister PRNG. */
+#define MT_PERIOD 624
+        struct {
+                int initialised;
+                unsigned long seed;
+                int index;
+                unsigned long data[MT_PERIOD];
+        } random;
+};
+
+/* Get a random seed from the OS, e.g. from /dev/urandom. */
+static unsigned long random_get_seed(void)
+{
+        FILE * fp = fopen("/dev/urandom", "rb");
+        if (fp != NULL) {
+                unsigned long seed;
+                size_t n = fread(&seed, sizeof(long), 1, fp);
+                fclose(fp);
+                if (n == 1) return seed;
+        }
+
+        /* Use C89 standard library as fallback. */
+        return time(NULL);
+}
+
+/* Uniform pseudo random distribution over (0,1) from a Mersenne Twister */
+static double random_uniform01(struct ent_context * context)
+{
+        struct simulation_context * c = (void *)context;
+
+        /* Initialise the PRNG, if not already done. */
+        if (!c->random.initialised) {
+                ent_context_random_set(context, NULL);
+        }
+
+        /* Check the buffer */
+        if (c->random.index < MT_PERIOD - 1) {
+                c->random.index++;
+        } else {
+                /* Update the MT state */
+                const int M = 397;
+                const unsigned long UPPER_MASK = 0x80000000UL;
+                const unsigned long LOWER_MASK = 0x7fffffffUL;
+                static unsigned long mag01[2] = { 0x0UL, 0x9908b0dfUL };
+                unsigned long y;
+                int kk;
+                for (kk = 0; kk < MT_PERIOD - M; kk++) {
+                        y = (c->random.data[kk] & UPPER_MASK) |
+                            (c->random.data[kk + 1] & LOWER_MASK);
+                        c->random.data[kk] =
+                            c->random.data[kk + M] ^ (y >> 1) ^
+                            mag01[y & 0x1UL];
+                }
+                for (; kk < MT_PERIOD - 1; kk++) {
+                        y = (c->random.data[kk] & UPPER_MASK) |
+                            (c->random.data[kk + 1] & LOWER_MASK);
+                        c->random.data[kk] =
+                            c->random.data[kk + (M - MT_PERIOD)] ^
+                            (y >> 1) ^ mag01[y & 0x1UL];
+                }
+                y = (c->random.data[MT_PERIOD - 1] & UPPER_MASK) |
+                    (c->random.data[0] & LOWER_MASK);
+                c->random.data[MT_PERIOD - 1] =
+                    c->random.data[M - 1] ^ (y >> 1) ^
+                    mag01[y & 0x1UL];
+                c->random.index = 0;
+        }
+
+        /* Tempering */
+        unsigned long y = c->random.data[c->random.index];
+        y ^= (y >> 11);
+        y ^= (y << 7) & 0x9d2c5680UL;
+        y ^= (y << 15) & 0xefc60000UL;
+        y ^= (y >> 18);
+
+        /* Convert to a 32 bits floating point in (0,1) */
+        const double u = (((double)y) + 0.5) * (1.0 / 4294967296.0);
+
+        return u;
+}
+
+/* API function for creating a simulation context. */
+enum ent_return ent_context_create(struct ent_context ** context)
+{
+        ENT_ACKNOWLEDGE(ent_context_create);
+
+        struct simulation_context * c = calloc(1, sizeof *c);
+        *context = (void *)c;
+        if (c == NULL) {
+                ENT_RETURN(ENT_RETURN_MEMORY_ERROR);
+        }
+
+        c->api.random = &random_uniform01;
+
+        return ENT_RETURN_SUCCESS;
+}
+
+/* API function for destroying a simulation context. */
+void ent_context_destroy(struct ent_context ** context)
+{
+        if ((context == NULL) || (*context == NULL)) return;
+
+        struct simulation_context * c = (void *)(*context);
+        if (c->api.random != &random_uniform01) {
+                /* Safeguard in case of wrong simulation context. */
+                return;
+        }
+
+        free(c);
+        *context = NULL;
+}
+
+/* Set the random seed for the built-in PRNG. */
+void ent_context_random_set(struct ent_context * context, unsigned long * seed)
+{
+        struct simulation_context * c = (void *)context;
+        if (c->api.random != &random_uniform01) {
+                /* Safeguard in case of wrong simulation context. */
+                return;
+        }
+
+        if (seed == NULL) {
+                /* Get a seed from the OS. */
+                c->random.seed = random_get_seed();
+        } else {
+                c->random.seed = *seed;
+        }
+        c->random.initialised = 1;
+
+        /* Set the Mersenne Twister initial state. */
+        c->random.data[0] = c->random.seed & 0xffffffffUL;
+        int j;
+        for (j = 1; j < MT_PERIOD; j++) {
+                c->random.data[j] = (1812433253UL *
+                        (c->random.data[j - 1] ^
+                            (c->random.data[j - 1] >> 30)) +
+                    j);
+                c->random.data[j] &= 0xffffffffUL;
+        }
+        c->random.index = MT_PERIOD;
+}
+
+/* Get the PRNG seed. */
+unsigned long ent_context_random_seed(struct ent_context * context)
+{
+        struct simulation_context * c = (void *)context;
+        if (c->api.random != &random_uniform01) {
+                /* Safeguard in case of wrong simulation context. */
+                return -1;
+        }
+
+        if (!c->random.initialised) {
+                ent_context_random_set(context, NULL);
+        }
+
+        return c->random.seed;
 }
 
 #if (_USE_GDB)

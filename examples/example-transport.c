@@ -22,14 +22,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* The ENT API. */
+/* The ENT library. */
 #include "ent.h"
+
 
 /* Density callback with a uniform density. */
 static double density(
     struct ent_medium * medium, struct ent_state * state, double * density)
 {
-        *density = 2.65E+03;
+        *density = 2.65E+03; /* kg / m^3. */
         return 0.;
 }
 
@@ -37,15 +38,12 @@ static double density(
 static double medium(struct ent_context * context, struct ent_state * state,
     struct ent_medium ** medium)
 {
-        static struct ent_medium medium_ = { 13., 26., &density };
+        /* Standard rock, see e.g.
+         * https://pdg.lbl.gov/2021/AtomicNuclearProperties/HTML/standard_rock.html
+         */
+        static struct ent_medium medium_ = { 11., 22., &density };
         *medium = &medium_;
         return 0.;
-}
-
-/* Uniform distribution over [0,1]. */
-static double random(struct ent_context * context)
-{
-        return rand() / (double)RAND_MAX;
 }
 
 int main(int nargc, char * argv[])
@@ -61,10 +59,14 @@ int main(int nargc, char * argv[])
         struct ent_physics * physics;
         ent_physics_create(&physics, "share/ent/BGR18-physics.ent");
 
-        /* Instanciate a new simulation context. */
-        struct ent_context context = { &medium, &random, NULL, NULL, depth };
+        /* Create a new simulation context. */
+        struct ent_context * context;
+        ent_context_create(&context);
 
-        /* Run a batch of Monte-Carlo transports. */
+        context->medium = &medium;
+        context->distance_max = depth;
+
+        /* Transport a bunch of Monte-Carlo events. */
         FILE * stream = fopen("transport.dat", "w+");
         int i;
         for (i = 0; i < events; i++) {
@@ -73,7 +75,7 @@ int main(int nargc, char * argv[])
                 enum ent_event event;
                 for (;;) {
                         ent_transport(
-                            physics, &context, &neutrino, NULL, &event);
+                            physics, context, &neutrino, NULL, &event);
                         if (neutrino.energy <= 0.) break;
                         if (event == ENT_EVENT_LIMIT_DISTANCE) {
                                 fprintf(stream, "%3d %12.5lE\n", neutrino.pid,
@@ -89,6 +91,8 @@ int main(int nargc, char * argv[])
         fclose(stream);
 
         /* Finalise and exit to the OS. */
+        ent_context_destroy(&context);
         ent_physics_destroy(&physics);
+
         exit(EXIT_SUCCESS);
 }
