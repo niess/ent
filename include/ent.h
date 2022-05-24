@@ -401,11 +401,12 @@ void ent_physics_destroy(struct ent_physics ** physics);
 /**
  * Dump physics data to a file.
  *
- * @param physics    A handle for the physics.
- * @param outfile    File where to dump the physics data.
+ * @param physics     A handle for the physics.
+ * @param metadata    Meta-data, or `NULL`.
+ * @param outfile     File where to dump the physics data.
  *
  * Dump physics data to a file using an ENT specific binary format (.ent). New
- * physics instances can be created directly from these data, using
+ * physics instances can be created directly from these data using
  * `ent_physics_create`. This allows for faster initialisation.
  *
  * __Error codes__
@@ -414,8 +415,18 @@ void ent_physics_destroy(struct ent_physics ** physics);
  *
  *     ENT_RETURN_PATH_ERROR      The output file could not be found/opened.
  */
-enum ent_return ent_physics_dump(
-    const struct ent_physics * physics, const char * outfile);
+enum ent_return ent_physics_dump(const struct ent_physics * physics,
+    const char * metadata, const char * outfile);
+
+/**
+ * Get physics meta-data.
+ *
+ * @param physics    A handle for the physics.
+ *
+ * Get physics meta-data as a string. If no meta-data are available, then `NULL`
+ * is returned.
+ */
+const char * ent_physics_metadata(const struct ent_physics * physics);
 
 /**
  * The total or process specific cross-section.

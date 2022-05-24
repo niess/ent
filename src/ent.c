@@ -254,6 +254,8 @@ struct ent_physics {
         double * dis_ylim_h;
         /* Bounds for x and Q2, in DIS. */
         double dis_Q2min, dis_Q2max;
+        /* Link to meta-data, if any. */
+        char * metadata;
         /* Placeholder for dynamic data. */
         char data[];
 };
@@ -292,6 +294,7 @@ static void * physics_create(void)
             3 * PROGET_N_DIS * DIS_Y_N * ENERGY_N;
         p->dis_ylim_b = p->dis_ylim_f + 2 * PROGET_N_DIS * ENERGY_N;
         p->dis_ylim_h = p->dis_ylim_b + 2 * PROGET_N_DIS * ENERGY_N;
+        p->metadata = NULL;
 
         return v;
 }
@@ -781,20 +784,39 @@ static enum ent_return physics_load(
 {
         *physics = NULL;
         enum ent_return rc;
+        char * metadata = NULL;
 
         /* Check the version number. */
         int version;
-        if ((fscanf(stream, "%d", &version) != 1) ||
+        if ((fscanf(stream, "%d/", &version) != 1) ||
             (version != ENT_FORMAT_VERSION)) {
                 rc = ENT_RETURN_FORMAT_ERROR;
                 goto error;
         }
 
-        /* Skip metadata. */
+        /* Load metadata. */
+        long pos = ftell(stream);
+        int n_meta = 0;
         while (fgetc(stream) != 0x0) {
                 if (feof(stream)) {
                         rc = ENT_RETURN_FORMAT_ERROR;
                         goto error;
+                } else {
+                        n_meta++;
+                }
+        }
+        if (n_meta > 0) {
+                fseek(stream, pos, SEEK_SET);
+                n_meta++;
+                metadata = malloc(n_meta);
+                if (metadata == NULL) {
+                        rc = ENT_RETURN_MEMORY_ERROR;
+                        goto error;
+                } else {
+                        if (fread(metadata, 1, n_meta, stream) != n_meta) {
+                                rc = ENT_RETURN_FORMAT_ERROR;
+                                goto error;
+                        }
                 }
         }
 
@@ -804,6 +826,7 @@ static enum ent_return physics_load(
                 rc = ENT_RETURN_MEMORY_ERROR;
                 goto error;
         }
+        (*physics)->metadata = metadata;
 
         /* Load SFs tables. */
         int i;
@@ -914,6 +937,7 @@ static enum ent_return physics_load(
 
         return ENT_RETURN_SUCCESS;
 error:
+        free(metadata);
         free(*physics);
         *physics = NULL;
         return rc;
@@ -2408,12 +2432,23 @@ void ent_physics_destroy(struct ent_physics ** physics)
                 free((*physics)->sf[i]);
         }
 
+        free((*physics)->metadata);
         free(*physics);
         *physics = NULL;
 }
 
-enum ent_return ent_physics_dump(
-    const struct ent_physics * physics, const char * outfile)
+/* API getter for physics metadata. */
+const char * ent_physics_metadata(const struct ent_physics * physics)
+{
+        if (physics == NULL) {
+                return NULL;
+        } else {
+                return physics->metadata;
+        }
+}
+
+enum ent_return ent_physics_dump(const struct ent_physics * physics,
+    const char * metadata, const char * outfile)
 {
         ENT_ACKNOWLEDGE(ent_physics_dump);
 
@@ -2430,10 +2465,19 @@ enum ent_return ent_physics_dump(
                 goto exit;
         }
 
-        /* XXX Copy & dump meta-data. */
-        if (fputc(0x0, stream) < 0) {
-                rc = ENT_RETURN_IO_ERROR;
-                goto exit;
+        /* Dump meta-data. */
+        int n_meta = (metadata != NULL) ? strlen(metadata) : 0;
+        if (n_meta > 0) {
+                n_meta++;
+                if (fwrite(metadata, 1, n_meta, stream) != n_meta) {
+                        rc = ENT_RETURN_IO_ERROR;
+                        goto exit;
+                }
+        } else {
+                if (fputc(0x0, stream) < 0) {
+                        rc = ENT_RETURN_IO_ERROR;
+                        goto exit;
+                }
         }
 
         /* Dump SF data. */
