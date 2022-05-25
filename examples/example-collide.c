@@ -30,65 +30,68 @@
 int main(int nargc, char * argv[])
 {
         /* Parse the input arguments. */
-        double energy = (nargc > 1) ? atof(argv[1]) : 1E+09;
+        double energy = (nargc > 1) ? atof(argv[1]) : 1E+09; /* GeV */
         enum ent_pid projectile = (nargc > 2) ? atoi(argv[2]) : ENT_PID_NU_TAU;
         enum ent_process process =
             (nargc > 3) ? atoi(argv[3]) : ENT_PROCESS_DIS_CC;
         double Z = (nargc > 4) ? atof(argv[4]) : 0.5;
         double A = (nargc > 5) ? atof(argv[5]) : 1.;
-        int events = (nargc > 6) ? atoi(argv[6]) : 10000;
 
         /* Create the physics using a data dump. */
         struct ent_physics * physics;
         ent_physics_create(&physics, "share/ent/CMS11-physics.ent");
 
-        /* Compute the DCS by numeric integration. */
-        const double ymin = 1E-07;
-        const double xmin = 1E-12;
-        const int ny = 141;
-        const int nx = 241;
-        const double dly = -log(ymin) / (ny - 1);
-        const double dlx = -log(xmin) / (nx - 1);
-        int i;
-        FILE * stream = fopen("dcs.dat", "w+");
-        for (i = 0; i < ny; i++) {
-                double y = (i < ny - 1) ? ymin * exp(i * dly) : 1. - 1E-08;
-                double dcs = 0.;
-                int j;
-                double x0 = xmin;
-                double d0;
-                ent_physics_dcs(
-                    physics, projectile, energy, Z, A, process, x0, y, &d0);
-                for (j = 1; j < nx; j++) {
-                        const double x1 = xmin * exp(j * dlx);
-                        double d1;
-                        ent_physics_dcs(physics, projectile, energy, Z, A,
-                            process, x1, y, &d1);
-                        dcs += 0.5 * (x1 - x0) * (d1 + d0);
-                        x0 = x1;
-                        d0 = d1;
-                }
-                fprintf(stream, "%12.5E %12.5E\n", y, dcs);
-        }
-        fclose(stream);
-
-        /* Create a new simulation context and a target medium. */
+        /* Create a new simulation context. */
         struct ent_context * context;
         ent_context_create(&context);
 
+        /* Initialise the projectile Monte Carlo state. */
+        struct ent_state lepton = {
+            .pid = projectile,
+            .energy = energy,
+            .weight = 1.,
+            .direction = { 0., 0., 1. } /* Must be a unit vector! */
+        };
+
+        /* Instanciate the target medium. */
         struct ent_medium medium = { Z, A };
 
-        /* Run a bunch of Monte-Carlo collisions. */
-        stream = fopen("y.dat", "w+");
-        for (i = 0; i < events; i++) {
-                struct ent_state neutrino = { projectile, energy, 0., 0., 1.,
-                        { 0., 0., 0. }, { 0., 0., 1. } };
-                struct ent_state products[ENT_PRODUCTS_SIZE];
-                ent_collide(
-                    physics, context, &neutrino, &medium, process, products);
-                fprintf(stream, "%12.5lE\n", products[0].energy / energy);
+        /* Generate a Monte-Carlo collision. */
+        struct ent_state products[ENT_PRODUCTS_SIZE];
+        ent_collide(physics, context, &lepton, &medium, process, products);
+
+        /* Print collision products. */
+        puts(" PID     energy     theta");
+        puts("          (GeV)     (rad)");
+
+        int i;
+        for (i = 0; i < ENT_PRODUCTS_SIZE + 1; i++) {
+                struct ent_state * product;
+                if (i == 0) {
+                        /* After the collision, the initial ``projectile'' state
+                         * contains the lepton product.
+                         .*/
+                        product = &lepton;
+                } else {
+                        /* Other collision products are provided separately.
+                         * Note that a `NULL` pointer can be provided, if this
+                         * is not of interest.
+                         */
+                        product = products + (i - 1);
+                }
+
+                if (product->weight <= 0.) continue;
+
+                const double theta = acos(product->direction[2]);
+                printf("%4d   %.3E  %.3E\n",
+                    product->pid, product->energy, theta);
+
+                /* N.B.: ENT does not hadronize hadronic products. However,
+                 * semi-leptonic decays of top quarks are simulated. A pid of
+                 * `100` is a special value used by ENT in order to designate a
+                 * generic hadronic product, i.e. not hadronized.
+                 */
         }
-        fclose(stream);
 
         /* Finalise and exit to the OS. */
         ent_context_destroy(&context);

@@ -33,26 +33,41 @@ int main(int nargc, char * argv[])
         enum ent_pid projectile = (nargc > 1) ? atoi(argv[1]) : ENT_PID_NU_TAU;
         enum ent_process process =
             (nargc > 2) ? atoi(argv[2]) : ENT_PROCESS_DIS_CC;
-        double Z = (nargc > 3) ? atof(argv[3]) : 0.5;
-        double A = (nargc > 4) ? atof(argv[4]) : 1.;
+        double energy = (nargc > 3) ? atof(argv[4]) : 1E+09; /* GeV */
+        double Z = (nargc > 4) ? atof(argv[4]) : 0.5;
+        double A = (nargc > 5) ? atof(argv[5]) : 1.;
 
-        /* Create the physics using DIS SFs data. */
+        /* Create the physics using DIS SFs data computed with APFEL.
+         *
+         * Alternatively, a PDF file can be provided as well, in LHA format.
+         * However, in this case ENT uses LO expressions for DIS structure
+         * functions.
+         */
         struct ent_physics * physics;
         ent_physics_create(&physics, "share/ent/BGR18-sf.ent");
 
+        /* Print physics meta-data. */
+        puts(ent_physics_metadata(physics));
+
         /* Get the total cross-section. */
-        const double Emin = 1E+02;
-        const double Emax = 1E+12;
-        const int nE = 301;
-        const double lnE = log(Emax / Emin) / (nE - 1);
-        int i;
-        for (i = 0; i < nE; i++) {
-                const double energy = Emin * exp(i * lnE);
-                double cs;
-                ent_physics_cross_section(
-                    physics, projectile, energy, Z, A, process, &cs);
-                printf("%.5lE %.5lE\n", energy, cs);
-        }
+        double cs0;
+        ent_physics_cross_section(
+            physics, projectile, energy, Z, A, process, &cs0);
+        printf("sigma0(%G) = %.3E\n", energy, cs0);
+
+        /* Rescale the physics and print the new cross-section. */
+        ent_physics_rescale(physics, "share/ent/BGR18-cross-section.txt");
+
+        double cs1;
+        ent_physics_cross_section(
+            physics, projectile, energy, Z, A, process, &cs1);
+        printf("sigma1(%G) = %.3E (%+.1f%%)\n", energy, cs1,
+            100. * (cs1 / cs0 - 1));
+
+        /* N.B.: Physics data can be dumped to a binary file (using
+         * `ent_physics_dump`) and directly re-loaded, for faster
+         * initialisation..
+         */
 
         /* Finalise and exit to the OS. */
         ent_physics_destroy(&physics);

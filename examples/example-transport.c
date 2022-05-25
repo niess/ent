@@ -49,46 +49,47 @@ static double medium(struct ent_context * context, struct ent_state * state,
 int main(int nargc, char * argv[])
 {
         /* Parse the input arguments. */
-        double energy = (nargc > 1) ? atof(argv[1]) : 5.7E+06;
+        double energy = (nargc > 1) ? atof(argv[1]) : 1E+06;
         enum ent_pid projectile =
-            (nargc > 2) ? atoi(argv[2]) : ENT_PID_NU_BAR_E;
+            (nargc > 2) ? atoi(argv[2]) : ENT_PID_NU_E;
         double depth = (nargc > 3) ? atof(argv[3]) : 6400E+03;
-        int events = (nargc > 4) ? atoi(argv[4]) : 10000;
 
         /* Create the physics using a data dump. */
         struct ent_physics * physics;
         ent_physics_create(&physics, "share/ent/BGR18-physics.ent");
 
-        /* Create a new simulation context. */
+        /* Create an configure the simulation context. */
         struct ent_context * context;
         ent_context_create(&context);
 
         context->medium = &medium;
         context->distance_max = depth;
 
-        /* Transport a bunch of Monte-Carlo events. */
-        FILE * stream = fopen("transport.dat", "w+");
-        int i;
-        for (i = 0; i < events; i++) {
-                struct ent_state neutrino = { projectile, energy, 0., 0., 1.,
-                        { 0., 0., 0. }, { 0., 0., 1. } };
-                enum ent_event event;
-                for (;;) {
-                        ent_transport(
-                            physics, context, &neutrino, NULL, &event);
-                        if (neutrino.energy <= 0.) break;
-                        if (event == ENT_EVENT_LIMIT_DISTANCE) {
-                                fprintf(stream, "%3d %12.5lE\n", neutrino.pid,
-                                    neutrino.energy);
-                                break;
-                        }
-                        int aid = abs(neutrino.pid);
-                        if ((aid != ENT_PID_NU_E) && (aid != ENT_PID_NU_MU) &&
-                            (aid != ENT_PID_NU_TAU))
-                                break;
+        /* Initialise the neutrino state */
+        struct ent_state lepton = {
+            .pid = projectile,
+            .energy = energy,
+            .weight = 1.,
+            .direction = { 0., 0., 1. } /* Must be a unit vector! */
+        };
+
+        /* Transport a Monte-Carlo event through a given depth of rock. */
+        enum ent_event event;
+        for (;;) {
+                ent_transport(
+                    physics, context, &lepton, NULL, &event);
+
+                if ((lepton.energy <= 0.) || (lepton.pid != projectile)) {
+                        puts("projectile did not exit.");
+                        break;
+                }
+
+                if (event == ENT_EVENT_LIMIT_DISTANCE) {
+                        printf("projectile exits with %G GeV left\n",
+                            lepton.energy);
+                        break;
                 }
         }
-        fclose(stream);
 
         /* Finalise and exit to the OS. */
         ent_context_destroy(&context);

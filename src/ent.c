@@ -3681,6 +3681,7 @@ static void decay_two_body_cm(struct ent_context * context,
                 ct = -1.;
         }
         const double phi = 2 * M_PI * context->random(context);
+        /* XXX Consider polarisation as well? */
 
         memcpy(p1s, direction, 3 * sizeof(*p1s));
         transport_rotate(p1s, ct, cos(phi), sin(phi));
