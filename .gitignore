@@ -1,6 +1,8 @@
 # Ignore binaries.
 bin
+docs/coverage
 lib
 *.ent
 *.o
 *.so
+test/criterion

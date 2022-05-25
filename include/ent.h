@@ -29,6 +29,11 @@ extern "C" {
 #include <stdio.h>
 #endif
 
+/* ENT library version. */
+#define ENT_VERSION_MAJOR 0
+#define ENT_VERSION_MINOR 8
+#define ENT_VERSION_PATCH 0
+
 /**
 * Return codes used by ENT.
 */
@@ -386,6 +391,8 @@ struct ent_state {
  *
  * __Error codes__
  *
+ *     ENT_RETURN_BAD_ADDRESS     A NULL pointer was provided.
+ *
  *     ENT_RETURN_FORMAT_ERROR    An input file format is not valid / supported.
  *
  *     ENT_RETURN_MEMORY_ERROR    Could not allocate memory.
@@ -496,7 +503,6 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
  * @param Z             The target charge number.
  * @param A             The target atomic mass number.
  * @param process       The interaction process.
- * @param x             The Bjorken _x_ fraction.
  * @param y             The energy loss fraction.
  * @param dcs           The coresponding DCS value.
  * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
@@ -512,7 +518,34 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
  */
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_pid projectile, double energy, double Z, double A,
-    enum ent_process process, double x, double y, double * dcs);
+    enum ent_process process, double y, double * dcs);
+
+/**
+ * Compute a DIS DDCS.
+ *
+ * @param physics       A handle for the physics.
+ * @param projectile    The incoming projectile.
+ * @param energy        The projectile total energy.
+ * @param Z             The target charge number.
+ * @param A             The target atomic mass number.
+ * @param process       The DIS interaction process.
+ * @param x             The Bjorken _x_ fraction.
+ * @param y             The energy loss fraction.
+ * @param ddcs          The coresponding DDCS value.
+ * @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+ * code is returned as detailed below.
+ *
+ * Compute the DIS Doubly Differential Cross-Section (DDCS) in the Laboratory
+ * frame for the given projectile incoming on a target (Z, A) at rest. For an
+ * isoscalar nucleon set `Z = 0.5` and `A = 1`.
+ *
+ * __Error codes__
+ *
+ *     ENT_RETURN_DOMAIN_ERROR     Some input parameter is invalid.
+ */
+enum ent_return ent_physics_ddcs(struct ent_physics * physics,
+    enum ent_pid projectile, double energy, double Z, double A,
+    enum ent_process process, double x, double y, double * ddcs);
 
 /**
 * Compute a PDF.
@@ -583,77 +616,6 @@ enum ent_event {
         /** The neutrino has interacted. */
         ENT_EVENT_INTERACTION
 };
-
-/**
- * Create a new simulation context.
- *
- * @param context    A handle for the simulation context.
-* @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
-* code is returned as detailed below.
- *
- * Create a new simulation context configured with a *random* stream. A
- * Mersennes Twister algorithm is used as Pseudo Random Numbers Generator
- * (PRNG). The `ent_context_random_set` function allows one to (re)set the PRNG
- * random seed.
- *
- * __Note__ : each simulation context manages its own independent PRNG. If an
- * external PRNG is used, then the user can directly instanciate an
- * `ent_context`, e.g. on the stack, instead of calling this function.
- *
- * __Warnings__
- *
- * Simulation contexts created with *ent_context_create* must be destroyed
- * using the *ent_context_destroy* function.
- *
- * __Error codes__
- *
- *     ENT_RETURN_MEMORY_ERROR    Could not allocate memory.
- */
-enum ent_return ent_context_create(struct ent_context ** context);
-
-/**
- * Properly destroy a simulation context.
- *
- * @param context    A handle for the simulation context.
- *
- * __Warnings__
- *
- * The simulation context must have been created with *ent_context_create* in
- * order to used this function.
- */
-void ent_context_destroy(struct ent_context ** context);
-
-/**
- * Get the random seed of a simulation context.
- *
- * @param context    A handle for the simulation context.
- *
- * __Note__: If no random seed has been explicitly set, using
- * `ent_context_random_set`, then a random one is used selected from the OS
- * entropy.
- *
- * __Warnings__
- *
- * The simulation context must have been created with *ent_context_create* in
- * order to used this function.
- */
-unsigned long ent_context_random_seed(struct ent_context * context);
-
-/**
- * Set the random seed of a simulation context.
- *
- * @param context    A handle for the simulation context.
- * @param seed       The random seed, or `NULL`.
- *
- * If a `NULL` *seed* is provided, then a random valued is used selected from
- * the OS entropy.
- *
- * __Warnings__
- *
- * The simulation context must have been created with *ent_context_create* in
- * order to used this function.
- */
-void ent_context_random_set(struct ent_context * context, unsigned long * seed);
 
 /** Maximum number of collision products. */
 #define ENT_PRODUCTS_SIZE 3
@@ -742,7 +704,7 @@ const char * ent_error_function(ent_function_t * function);
  * @param newline       The newline separator or `NULL`.
  *
  * The output summary is formated in JSON. The *tabulation* and *newline*
- * parameters allow to control the output's rendering.
+ * parameters allow to control the output rendering.
  */
 void ent_error_print(FILE * stream, enum ent_return code,
     ent_function_t function, const char * tabulation, const char * newline);
@@ -790,6 +752,100 @@ ent_handler_cb * ent_error_handler_get();
  * then a `NULL` pointer can be provided for the corresponding parameter.
  */
 void ent_version(int * major, int * minor, int * patch);
+
+/**
+ * Create a new simulation context.
+ *
+ * @param context    A handle for the simulation context.
+* @return On success `ENT_RETURN_SUCCESS` is returned otherwise an error
+* code is returned as detailed below.
+ *
+ * Create a new simulation context configured with a *random* stream. A
+ * Mersennes Twister algorithm is used as Pseudo Random Numbers Generator
+ * (PRNG). The `ent_context_random_set` function allows one to (re)set the PRNG
+ * random seed.
+ *
+ * __Note__ : each simulation context manages its own independent PRNG. If an
+ * external PRNG is used, then the user can directly instanciate an
+ * `ent_context`, e.g. on the stack, instead of calling this function.
+ *
+ * __Warnings__
+ *
+ * Simulation contexts created with *ent_context_create* must be destroyed
+ * using the *ent_context_destroy* function.
+ *
+ * __Error codes__
+ *
+ *     ENT_RETURN_BAD_ADDRESS     A NULL pointer was provided.
+ *
+ *     ENT_RETURN_MEMORY_ERROR    Could not allocate memory.
+ */
+enum ent_return ent_context_create(struct ent_context ** context);
+
+/**
+ * Properly destroy a simulation context.
+ *
+ * @param context    A handle for the simulation context.
+ *
+ * __Warnings__
+ *
+ * The simulation context must have been created with *ent_context_create* in
+ * order to used this function.
+ */
+void ent_context_destroy(struct ent_context ** context);
+
+/**
+ * Get the random seed of a simulation context.
+ *
+ * @param context    A handle for the simulation context.
+ * @return the current random seed is returned.
+ *
+ * __Note__: If no random seed has been explicitly set, using
+ * `ent_context_random_set`, then a random one is used selected from the OS
+ * entropy.
+ *
+ * __Warnings__
+ *
+ * The simulation context must have been created with *ent_context_create* in
+ * order to used this function.
+ */
+unsigned long ent_context_random_seed(struct ent_context * context);
+
+/**
+ * Set the random seed of a simulation context.
+ *
+ * @param context    A handle for the simulation context.
+ * @param seed       The random seed, or `NULL`.
+ *
+ * If a `NULL` *seed* is provided, then a random valued is used selected from
+ * the OS entropy.
+ *
+ * __Warnings__
+ *
+ * The simulation context must have been created with *ent_context_create* in
+ * order to used this function.
+ */
+void ent_context_random_set(struct ent_context * context, unsigned long * seed);
+
+/** ENT library memory allocator.
+ *
+ * @param size    The number of bytes to allocate.
+ * @return On success, a pointer to the allocated memory must be returned,
+ * otherwise `NULL`.
+ *
+ * The `ent_malloc` and `ent_free` function pointers let the user provide its
+ * own memory allocator. By default, the standard library `malloc` and `free`
+ * functions are used.
+ */
+extern void * (*ent_malloc)(size_t size);
+
+/** ENT library memory deallocator.
+ *
+ * The `ent_malloc` and `ent_free` function pointers let the user provide its
+ * own memory allocator. By default, the standard library `malloc` and `free`
+ * functions are used.
+ */
+extern void (*ent_free)(void * ptr);
 
 #ifdef __cplusplus
 }

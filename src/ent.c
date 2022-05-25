@@ -80,16 +80,15 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-/* ENT library version. */
-#define ENT_VERSION_MAJOR 0
-#define ENT_VERSION_MINOR 8
-#define ENT_VERSION_PATCH 0
-
 /* ENT data format tag. */
 #define ENT_FORMAT_TAG "/ent/"
 
 /* ENT data format version. */
 #define ENT_FORMAT_VERSION 5
+
+/* By default, the standard library memory allocator is used. */
+void * (*ent_malloc)(size_t size) = &malloc;
+void (*ent_free)(void * ptr) = &free;
 
 /* Indices for Physics processes with a specific projectile and target. */
 enum proget_index {
@@ -283,7 +282,7 @@ static int memory_padded_size(int size, int pad_size)
 static void * physics_create(void)
 {
         const int np = PROGET_N - 1;
-        void * v = malloc(sizeof(struct ent_physics) +
+        void * v = ent_malloc(sizeof(struct ent_physics) +
             (2 * np * ENERGY_N +
              5 * PROGET_N_DIS * ENERGY_N * DIS_Y_N +
              6 * PROGET_N_DIS * ENERGY_N) * sizeof(double));
@@ -326,24 +325,30 @@ const char * ent_error_function(ent_function_t * caller)
         if (caller == (ent_function_t *)function) return #function
 
         /* API functions with error codes. */
+        REGISTER_FUNCTION(ent_collide);
+        REGISTER_FUNCTION(ent_context_create);
         REGISTER_FUNCTION(ent_physics_create);
         REGISTER_FUNCTION(ent_physics_cross_section);
         REGISTER_FUNCTION(ent_physics_dcs);
+        REGISTER_FUNCTION(ent_physics_ddcs);
         REGISTER_FUNCTION(ent_physics_dump);
         REGISTER_FUNCTION(ent_physics_pdf);
         REGISTER_FUNCTION(ent_physics_rescale);
         REGISTER_FUNCTION(ent_physics_sf);
-        REGISTER_FUNCTION(ent_collide);
         REGISTER_FUNCTION(ent_transport);
 
         /* Other API functions. */
-        REGISTER_FUNCTION(ent_physics_destroy);
-        REGISTER_FUNCTION(ent_physics_metadata);
+        REGISTER_FUNCTION(ent_context_destroy);
+        REGISTER_FUNCTION(ent_context_random_seed);
+        REGISTER_FUNCTION(ent_context_random_set);
         REGISTER_FUNCTION(ent_error_string);
         REGISTER_FUNCTION(ent_error_print);
         REGISTER_FUNCTION(ent_error_function);
         REGISTER_FUNCTION(ent_error_handler_get);
         REGISTER_FUNCTION(ent_error_handler_set);
+        REGISTER_FUNCTION(ent_physics_destroy);
+        REGISTER_FUNCTION(ent_physics_metadata);
+        REGISTER_FUNCTION(ent_version);
 
         return NULL;
 #undef REGISTER_FUNCTION
@@ -390,6 +395,8 @@ static enum ent_return error_handle(
 void ent_error_print(FILE * stream, enum ent_return code,
     ent_function_t * function, const char * tabulation, const char * newline)
 {
+        if (stream == NULL) return;
+
         const char * tab = (tabulation == NULL) ? "" : tabulation;
         const char * cr = (newline == NULL) ? "" : newline;
 
@@ -418,7 +425,7 @@ struct file_buffer {
 static enum ent_return file_buffer_create(
     struct file_buffer ** buffer, FILE * stream, jmp_buf env)
 {
-        if ((*buffer = malloc(FILE_BLOCK_SIZE)) == NULL)
+        if ((*buffer = ent_malloc(FILE_BLOCK_SIZE)) == NULL)
                 return ENT_RETURN_MEMORY_ERROR;
         memcpy((*buffer)->env, env, sizeof(jmp_buf));
         (*buffer)->stream = stream;
@@ -554,7 +561,7 @@ static struct grid * grid_create(int nx, int nQ2, int nf)
             sizeof(struct grid) + size_x + size_Q2 + size_lambda + size_sf;
 
         struct grid * g;
-        if ((g = malloc(size)) == NULL) {
+        if ((g = ent_malloc(size)) == NULL) {
                 return NULL;
         }
 
@@ -578,7 +585,7 @@ static void grid_destroy(struct grid ** grid)
         struct grid * g = *grid;
         while (g != NULL) {
                 struct grid * next = g->next;
-                free(g);
+                ent_free(g);
                 g = next;
         }
         *grid = NULL;
@@ -675,7 +682,7 @@ static enum ent_return grid_load(
 
         return ENT_RETURN_SUCCESS;
 error:
-        free(g);
+        ent_free(g);
         *g_ptr = NULL;
 
         return rc;
@@ -830,7 +837,7 @@ static enum ent_return physics_load(
         if (n_meta > 0) {
                 fseek(stream, pos, SEEK_SET);
                 n_meta++;
-                metadata = malloc(n_meta);
+                metadata = ent_malloc(n_meta);
                 if (metadata == NULL) {
                         rc = ENT_RETURN_MEMORY_ERROR;
                         goto error;
@@ -965,8 +972,8 @@ static enum ent_return physics_load(
 
         return ENT_RETURN_SUCCESS;
 error:
-        free(metadata);
-        free(*physics);
+        ent_free(metadata);
+        ent_free(*physics);
         *physics = NULL;
         return rc;
 }
@@ -1076,6 +1083,19 @@ static enum ent_return lha_load(struct ent_physics ** physics, FILE * stream)
             ENT_RETURN_SUCCESS)
                 goto exit;
 
+        /* Check the format tag. */
+        file_get_line(&buffer, 0);
+        if (strncmp(buffer->cursor, "PdfType:", 8) != 0) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto exit;
+        }
+
+        file_get_line(&buffer, 0);
+        if (strcmp(buffer->cursor, "Format: lhagrid1") != 0) {
+                rc = ENT_RETURN_FORMAT_ERROR;
+                goto exit;
+        }
+
         /* Load the PDF set(s). */
         struct grid * pdf = NULL;
         int eof;
@@ -1113,10 +1133,10 @@ static enum ent_return lha_load(struct ent_physics ** physics, FILE * stream)
                 (*physics)->mteff[i] = mt;
         }
 exit:
-        free(buffer);
+        ent_free(buffer);
         if (rc != ENT_RETURN_SUCCESS) {
                 grid_destroy(&head);
-                free(*physics);
+                ent_free(*physics);
                 *physics = NULL;
         }
         return rc;
@@ -1373,7 +1393,7 @@ static double dcs_compute(struct ent_physics * physics, enum ent_pid projectile,
     double energy, double Z, double A, enum ent_process process, double x,
     double y)
 {
-        if ((process == ENT_PROCESS_DIS_CC_OTHER) || 
+        if ((process == ENT_PROCESS_DIS_CC_OTHER) ||
             (process == ENT_PROCESS_DIS_CC_TOP) ||
             (process == ENT_PROCESS_DIS_NC)) {
                 return dcs_dis(
@@ -2392,6 +2412,10 @@ enum ent_return ent_physics_create(
 {
         ENT_ACKNOWLEDGE(ent_physics_create);
 
+        if (physics == NULL) {
+                ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
+        }
+
         enum ent_return rc;
         *physics = NULL;
 
@@ -2441,17 +2465,17 @@ void ent_physics_destroy(struct ent_physics ** physics)
         struct grid * g = (*physics)->pdf;
         while (g != NULL) {
                 struct grid * next = g->next;
-                free(g);
+                ent_free(g);
                 g = next;
         }
 
         int i;
         for (i = 0; i < PROGET_N_DIS; i++) {
-                free((*physics)->sf[i]);
+                ent_free((*physics)->sf[i]);
         }
 
-        free((*physics)->metadata);
-        free(*physics);
+        ent_free((*physics)->metadata);
+        ent_free(*physics);
         *physics = NULL;
 }
 
@@ -2475,7 +2499,25 @@ enum ent_return ent_physics_rescale(
                         goto exit;
                 }
 
+                /* Backup cross-sections in case of failure. */
+                size_t size =
+                    ENERGY_N * (PROGET_N - 1) * sizeof(*physics->cs_t);
+                double * tmp = malloc(size);
+                if (tmp == NULL) {
+                        rc = ENT_RETURN_MEMORY_ERROR;
+                        goto exit;
+                } else {
+                        memcpy(tmp, physics->cs_t, size);
+                }
+
+                /* Load values from file. */
                 rc = cs_load(stream, physics);
+
+                if (rc != ENT_RETURN_SUCCESS) {
+                        /* Restore initial values. */
+                        memcpy(physics->cs_t, tmp, size);
+                }
+                free(tmp);
         }
 
 exit:
@@ -2720,20 +2762,72 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
 /* Generic API function for computing DCSs. */
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_pid projectile, double energy, double Z, double A,
-    enum ent_process process, double x, double y, double * dcs)
+    enum ent_process process, double y, double * dcs)
 {
         ENT_ACKNOWLEDGE(ent_physics_dcs);
 
         /* Check the inputs. */
         *dcs = 0.;
-        if ((x > 1.) || (x < 0.) || (y > 1.) || (y < 0.))
+        if ((y > 1.) || (y < 0.) || (process <= ENT_PROCESS_NONE) ||
+            (process >= ENT_N_PROCESSES)) {
                 ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
+
+        const int aid = abs(projectile);
+        if ((aid != ENT_PID_NU_E) &&
+            (aid != ENT_PID_NU_MU) &&
+            (aid != ENT_PID_NU_TAU)) {
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
 
         /* Compute the corresponding DCS. */
+        if ((process == ENT_PROCESS_DIS_CC_OTHER) ||
+            (process == ENT_PROCESS_DIS_CC_TOP) ||
+            (process == ENT_PROCESS_DIS_CC) ||
+            (process == ENT_PROCESS_DIS_NC)) {
+                /* XXX Compute DIS DCS from tabulation. */
+        } else {
+                const double d = dcs_compute(
+                     physics, projectile, energy, Z, A, process, 0., y);
+                if (d == -DBL_MAX) ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+                *dcs = d;
+        }
+
+        return ENT_RETURN_SUCCESS;
+}
+
+/* Generic API function for computing DIS DDCSs. */
+enum ent_return ent_physics_ddcs(struct ent_physics * physics,
+    enum ent_pid projectile, double energy, double Z, double A,
+    enum ent_process process, double x, double y, double * ddcs)
+{
+        ENT_ACKNOWLEDGE(ent_physics_ddcs);
+
+        /* Check the inputs. */
+        *ddcs = 0.;
+        if ((x > 1.) || (x < 0.) || (y > 1.) || (y < 0.)) {
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
+
+        if ((process != ENT_PROCESS_DIS_CC_OTHER) &&
+            (process != ENT_PROCESS_DIS_CC_TOP) &&
+            (process != ENT_PROCESS_DIS_CC) &&
+            (process != ENT_PROCESS_DIS_NC)) {
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
+
+        const int aid = abs(projectile);
+        if ((aid != ENT_PID_NU_E) &&
+            (aid != ENT_PID_NU_MU) &&
+            (aid != ENT_PID_NU_TAU)) {
+                ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        }
+
+        /* Compute the corresponding DDCS. */
         const double d =
             dcs_compute(physics, projectile, energy, Z, A, process, x, y);
         if (d == -DBL_MAX) ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
-        *dcs = d;
+        *ddcs = d;
 
         return ENT_RETURN_SUCCESS;
 }
@@ -2799,6 +2893,10 @@ enum ent_return ent_physics_sf(struct ent_physics * physics,
     double x, double Q2, double * F2, double * F3, double * FL)
 {
         ENT_ACKNOWLEDGE(ent_physics_sf);
+
+        if (F2 != NULL) *F2 = 0.;
+        if (F3 != NULL) *F3 = 0.;
+        if (FL != NULL) *FL = 0.;
 
         /* Check the inputs. */
         if ((x > 1.) || (x <= 0.) || (Q2 < 0.))
@@ -5524,12 +5622,17 @@ enum ent_return ent_context_create(struct ent_context ** context)
 {
         ENT_ACKNOWLEDGE(ent_context_create);
 
-        struct simulation_context * c = calloc(1, sizeof *c);
+        if (context == NULL) {
+                ENT_RETURN(ENT_RETURN_BAD_ADDRESS);
+        }
+
+        struct simulation_context * c = ent_malloc(sizeof *c);
         *context = (void *)c;
         if (c == NULL) {
                 ENT_RETURN(ENT_RETURN_MEMORY_ERROR);
         }
 
+        memset(c, 0x0, sizeof *c);
         c->api.random = &random_uniform01;
 
         return ENT_RETURN_SUCCESS;
@@ -5546,7 +5649,7 @@ void ent_context_destroy(struct ent_context ** context)
                 return;
         }
 
-        free(c);
+        ent_free(c);
         *context = NULL;
 }
 
