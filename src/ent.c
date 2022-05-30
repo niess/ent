@@ -2759,6 +2759,67 @@ enum ent_return ent_physics_cross_section(struct ent_physics * physics,
         return ENT_RETURN_SUCCESS;
 }
 
+/* Interpolate the tabulated DIS DCS. */
+static double dis_dcs_interpolate(struct ent_physics * physics,
+    enum proget_index proget, double energy, double y)
+{
+        /* Check support. */
+        double ymin, ymax;
+        dis_get_support_y(physics, proget, energy, 1, &ymin, &ymax);
+        if ((y <= ymin) || (y >= ymax) || (ymin >= ymax)) {
+                return 0.;
+        }
+
+        /* Compute DIS PDF from tabulation. */
+        const double dle =
+            log(ENERGY_MAX / ENERGY_MIN) / (ENERGY_N - 1);
+        double he = log(energy / ENERGY_MIN) / dle;
+        int ie = (int)he;
+        if (ie < 0) {
+                ie = 0;
+                he = 0.;
+        } else if (ie >= ENERGY_N - 1) {
+                ie = ENERGY_N - 2;
+                he = 1.;
+        } else {
+                he -= ie;
+        }
+
+        const double dly = log(ymax / ymin) / (DIS_Y_N - 1);
+        double hy = log(y / ymin) / dly;
+        int iy = (int)hy;
+        if (iy < 0) {
+                iy = 0;
+                hy = 0.;
+        } else if (iy >= DIS_Y_N - 1) {
+                iy = DIS_Y_N - 2;
+                hy = 1.;
+        } else {
+                hy -= iy;
+        }
+
+        double * pdf0 = physics->dis_pdf + (proget * ENERGY_N + ie) * DIS_Y_N;
+        double * pdf1 =
+            physics->dis_pdf + (proget * ENERGY_N + ie + 1) * DIS_Y_N;
+
+        const double v0 = pdf0[iy] * (1. - he) + pdf1[iy] * he;
+        const double v1 = pdf0[iy + 1] * (1. - he) + pdf1[iy + 1] * he;
+        const double pdf = v0 * (1. - hy) + v1 * hy;
+
+        if (pdf <= 0.) {
+                return 0.;
+        }
+
+        /* Get transport total cross-section. */
+        double *cs0, *cs1;
+        double p1, p2;
+        const int mode = cross_section_prepare(
+            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
+        const double cs = cross_section_compute(mode, proget, cs0, cs1, p1, p2);
+
+        return cs * pdf;
+}
+
 /* Generic API function for computing DCSs. */
 enum ent_return ent_physics_dcs(struct ent_physics * physics,
     enum ent_pid projectile, double energy, double Z, double A,
@@ -2785,7 +2846,48 @@ enum ent_return ent_physics_dcs(struct ent_physics * physics,
             (process == ENT_PROCESS_DIS_CC_TOP) ||
             (process == ENT_PROCESS_DIS_CC) ||
             (process == ENT_PROCESS_DIS_NC)) {
-                /* XXX Compute DIS DCS from tabulation. */
+                /* Interpolate tabulated values. */
+                int cc_all;
+                if (process == ENT_PROCESS_DIS_CC) {
+                        cc_all = 1;
+                        process = ENT_PROCESS_DIS_CC_OTHER;
+                } else {
+                        cc_all = 0;
+                }
+
+                double d = 0.;
+                if (Z > 0.) {
+                        enum proget_index proget;
+                        proget_compute(
+                            projectile, ENT_PID_PROTON, process, &proget);
+                        d += Z * dis_dcs_interpolate(
+                            physics, proget, energy, y);
+
+                        if (cc_all) {
+                                proget_compute(projectile, ENT_PID_PROTON,
+                                    ENT_PROCESS_DIS_CC_TOP, &proget);
+                                d += Z * dis_dcs_interpolate(
+                                    physics, proget, energy, y);
+                        }
+                }
+
+                const double N = A - Z;
+                if (N > 0.) {
+                        enum proget_index proget;
+                        proget_compute(
+                            projectile, ENT_PID_NEUTRON, process, &proget);
+                        d += N * dis_dcs_interpolate(
+                            physics, proget, energy, y);
+
+                        if (cc_all) {
+                                proget_compute(projectile, ENT_PID_NEUTRON,
+                                    ENT_PROCESS_DIS_CC_TOP, &proget);
+                                d += N * dis_dcs_interpolate(
+                                    physics, proget, energy, y);
+                        }
+                }
+
+                *dcs = d;
         } else {
                 const double d = dcs_compute(
                      physics, projectile, energy, Z, A, process, 0., y);
@@ -2794,6 +2896,39 @@ enum ent_return ent_physics_dcs(struct ent_physics * physics,
         }
 
         return ENT_RETURN_SUCCESS;
+}
+
+/* Compute the rescaled DIS DDCS. */
+static double dis_ddcs_rescaled(struct ent_physics * physics,
+    enum ent_pid projectile, double energy, enum ent_pid target,
+    enum ent_process process, double x, double y)
+{
+        /* Compute the DDCS. */
+        const double Z = (target == ENT_PID_PROTON) ? 1. : 0.;
+        const double A = 1.;
+        const double ddcs =
+            dcs_compute(physics, projectile, energy, Z, A, process, x, y);
+
+        /* Rescale to transport total cross-section. */
+        enum proget_index proget;
+        proget_compute(
+            projectile, ENT_PID_PROTON, process, &proget);
+
+        double *cs0, *cs1;
+        double p1, p2;
+        int mode;
+
+        mode = cross_section_prepare(
+            physics->cs_t, energy, &cs0, &cs1, &p1, &p2);
+        const double cst = cross_section_compute(
+            mode, proget, cs0, cs1, p1, p2);
+
+        mode = cross_section_prepare(
+            physics->cs_k, energy, &cs0, &cs1, &p1, &p2);
+        const double csk = cross_section_compute(
+            mode, proget, cs0, cs1, p1, p2);
+
+        return (csk > 0.) ? ddcs * cst / csk : 0.;
 }
 
 /* Generic API function for computing DIS DDCSs. */
@@ -2824,9 +2959,36 @@ enum ent_return ent_physics_ddcs(struct ent_physics * physics,
         }
 
         /* Compute the corresponding DDCS. */
-        const double d =
-            dcs_compute(physics, projectile, energy, Z, A, process, x, y);
-        if (d == -DBL_MAX) ENT_RETURN(ENT_RETURN_DOMAIN_ERROR);
+        int cc_all;
+        if (process == ENT_PROCESS_DIS_CC) {
+                cc_all = 1;
+                process = ENT_PROCESS_DIS_CC_OTHER;
+        } else {
+                cc_all = 0;
+        }
+
+        double d = 0.;
+        if (Z > 0.) {
+                d += Z * dis_ddcs_rescaled(
+                    physics, projectile, energy, ENT_PID_PROTON, process, x, y);
+
+                if (cc_all) {
+                        d += Z * dis_ddcs_rescaled(physics, projectile, energy,
+                            ENT_PID_PROTON, ENT_PROCESS_DIS_CC_TOP, x, y);
+                }
+        }
+
+        const double N = A - Z;
+        if (N > 0.) {
+                d += N * dis_ddcs_rescaled(physics, projectile, energy,
+                    ENT_PID_NEUTRON, process, x, y);
+
+                if (cc_all) {
+                        d += N * dis_ddcs_rescaled(physics, projectile, energy,
+                            ENT_PID_NEUTRON, ENT_PROCESS_DIS_CC_TOP, x, y);
+                }
+        }
+
         *ddcs = d;
 
         return ENT_RETURN_SUCCESS;

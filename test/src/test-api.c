@@ -317,8 +317,31 @@ Test(api, ent_physics)
         cr_expect(cs0 == cs1);
 
         /* Check DCS getter */
-        double dcs, y;
-        Z = 1., y = 1E-03;
+        double dcs, y = 1E-03;
+
+        Z = 0.5;
+
+        dcs = 0.;
+        cr_expect(ent_physics_dcs(physics, ENT_PID_NU_E, energy, Z, A,
+            ENT_PROCESS_DIS_CC, y, &dcs) == ENT_RETURN_SUCCESS);
+        cr_expect(dcs > 0.);
+
+        dcs = 0.;
+        cr_expect(ent_physics_dcs(physics, ENT_PID_NU_E, energy, Z, A,
+            ENT_PROCESS_DIS_CC_OTHER, y, &dcs) == ENT_RETURN_SUCCESS);
+        cr_expect(dcs > 0.);
+
+        dcs = 0.;
+        cr_expect(ent_physics_dcs(physics, ENT_PID_NU_E, energy, Z, A,
+            ENT_PROCESS_DIS_CC_TOP, y, &dcs) == ENT_RETURN_SUCCESS);
+        cr_expect(dcs > 0.);
+
+        dcs = 0.;
+        cr_expect(ent_physics_dcs(physics, ENT_PID_NU_E, energy, Z, A,
+            ENT_PROCESS_DIS_NC, y, &dcs) == ENT_RETURN_SUCCESS);
+        cr_expect(dcs > 0.);
+
+        Z = 1.;
 
         dcs = 0.;
         cr_expect(ent_physics_dcs(physics, ENT_PID_NU_E, energy, Z, A,
