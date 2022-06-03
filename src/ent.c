@@ -40,17 +40,17 @@
 /* The nucleon mass, in GeV/c^2. */
 #define ENT_MASS_NUCLEON 0.931494
 /* The W boson mass, in GeV/c^2. */
-#define ENT_MASS_W 80.385
+#define ENT_MASS_W 80.363 /* GFitter, 2022. */
 /* The Z boson mass, in GeV/c^2. */
-#define ENT_MASS_Z 91.1876
+#define ENT_MASS_Z 91.1879 /* GFitter, 2022. */
 /* The W boson width, in GeV/c^2. */
-#define ENT_WIDTH_W 2.085
+#define ENT_WIDTH_W 2.0928850 /* Kniel et al., 2000 (hep-ph/0005060) */
 /* Branching ratio for W decay to electron. */
-#define ENT_BR_W_TO_ELECTRON 0.1071
+#define ENT_BR_W_TO_ELECTRON 0.10838 /* Kniel et al., 2000 (hep-ph/0005060)*/
 /* Branching ratio for W decay to muon. */
-#define ENT_BR_W_TO_MUON 0.1063
+#define ENT_BR_W_TO_MUON 0.10838 /* Kniel et al., 2000 (hep-ph/0005060)*/
 /* Branching ratio for W decay to tau. */
-#define ENT_BR_W_TO_TAU 0.1138
+#define ENT_BR_W_TO_TAU 0.10831 /* Kniel et al., 2000 (hep-ph/0005060)*/
 /* The muon decay length, in m. */
 #define ENT_CTAU_MUON 659.09433
 /* The tau decay length, in m. */
@@ -59,8 +59,6 @@
 #define ENT_PHYS_GF 1.1663787E-05
 /* The Planck constant as hbar*c, in GeV * m. */
 #define ENT_PHYS_HBC 1.97326978E-16
-/* The Weinberg angle at MZ, as sin(theta_W)^2. */
-#define ENT_PHYS_SIN_THETA_W_2 0.231295
 /* Avogadro's number, in mol^-1. */
 #define ENT_PHYS_NA 6.022E+23
 
@@ -1142,6 +1140,12 @@ exit:
         return rc;
 }
 
+static const double sin2thetaw(void)
+{
+        const double r = ENT_MASS_W / ENT_MASS_Z;
+        return 1. - r * r;
+}
+
 /* Compute SFs for DIS. */
 static void dis_compute_sf(struct ent_physics * physics,
     enum ent_pid projectile, double Z, double A, enum ent_process process,
@@ -1188,7 +1192,7 @@ static void dis_compute_sf(struct ent_physics * physics,
                         const double c = xfx[4 * eps + nf];
                         const double b = xfx[5 * eps + nf];
 
-                        const double s23 = 2. * ENT_PHYS_SIN_THETA_W_2 / 3.;
+                        const double s23 = 2. * sin2thetaw() / 3.;
                         const double gp2 = 1. + 4. * s23 * (s23 - 1.);
                         const double gm2 = 4. * s23 * s23;
                         const double gpp2 = 1. + s23 * (s23 - 2.);
@@ -1310,8 +1314,9 @@ static double dcs_dis(struct ent_physics * physics, enum ent_pid projectile,
 static double dcs_elastic(
     enum ent_pid projectile, double energy, double Z, double y)
 {
-        const double R = 2. * ENT_PHYS_SIN_THETA_W_2;
-        const double L = 2. * ENT_PHYS_SIN_THETA_W_2 - 1.;
+        const double s2w = sin2thetaw();
+        const double R = 2. * s2w;
+        const double L = 2. * s2w - 1.;
         const double MZ2 = ENT_MASS_Z * ENT_MASS_Z;
         const double rZ = MZ2 / (MZ2 + 2. * ENT_MASS_ELECTRON * energy * y);
 
@@ -3626,8 +3631,9 @@ static double transport_sample_y(struct ent_context * context, double energy,
             0.5 * ENT_MASS_Z * ENT_MASS_Z / (ENT_MASS_ELECTRON * energy);
         const double yW =
             0.5 * ENT_MASS_W * ENT_MASS_W / (ENT_MASS_ELECTRON * energy);
-        const double Re2 = 4. * ENT_PHYS_SIN_THETA_W_2 * ENT_PHYS_SIN_THETA_W_2;
-        const double Le = 2. * ENT_PHYS_SIN_THETA_W_2 - 1.;
+        const double s2w = sin2thetaw();
+        const double Re2 = 4. * s2w * s2w;
+        const double Le = 2. * s2w - 1.;
         const double Le2 = Le * Le;
 
         *mu = ENT_MASS_ELECTRON;
@@ -3941,7 +3947,6 @@ static void decay_two_body_cm(struct ent_context * context,
                 ct = -1.;
         }
         const double phi = 2 * M_PI * context->random(context);
-        /* XXX Consider polarisation as well? */
 
         memcpy(p1s, direction, 3 * sizeof(*p1s));
         transport_rotate(p1s, ct, cos(phi), sin(phi));
