@@ -4476,9 +4476,7 @@ static enum ent_return transport_vertex_backward_top_decay(
                 return ENT_RETURN_SUCCESS;
         }
 
-        /* Sample the primary neutrino flavour from the hadron product.
-         * XXX any weight?
-         */
+        /* Sample the primary neutrino flavour from the hadron product. */
         double p[3];
         enum ent_pid pid[3];
         int i;
@@ -4496,9 +4494,16 @@ static enum ent_return transport_vertex_backward_top_decay(
         const double r = context->random(context) * p[2];
 
         enum ent_pid ancestor;
-        if (r < p[0]) ancestor = pid[0];
-        else if (r < p[1]) ancestor = pid[1];
-        else ancestor = pid[2];
+        if (r < p[0]) {
+                ancestor = pid[0];
+                state->weight *= p[2] / p[0];
+        } else if (r < p[1]) {
+                ancestor = pid[1];
+                state->weight *= p[2] / (p[1] - p[0]);
+        } else {
+                ancestor = pid[2];
+                state->weight *= p[2] / (p[2] - p[1]);
+        }
 
         /* Backward sample the energy loss from the t-quark. */
         enum ent_return rc;
@@ -5150,13 +5155,13 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
 
                 /* True decay processes. */
                 if (medium->density != NULL) {
-                        /* XXX Check ancestor density? */
                         if (density <= 0.) {
                                 medium->density(medium, daughter, &density);
                                 if (density <= 0.)
                                         return ENT_RETURN_DOMAIN_ERROR;
                         }
                         if (apid != ENT_PID_NU_TAU) {
+                                /* True decay process from a muon. */
                                 int mother;
                                 if (apid == ENT_PID_MUON) {
                                         mother = (daughter->pid > 0) ?
@@ -5170,19 +5175,22 @@ static enum ent_return transport_ancestor_draw(struct ent_physics * physics,
                                 ancestor_decay(context, daughter, mother,
                                     medium->A, density, &np, proget_v, p,
                                     ancestor_v);
-                        }
-
-                        /* True decay process from a tau. */
-                        int mother;
-                        if (apid == ENT_PID_NU_TAU) {
-                                mother = (daughter->pid > 0) ? ENT_PID_TAU :
-                                                               ENT_PID_TAU_BAR;
                         } else {
-                                mother = (daughter->pid > 0) ? ENT_PID_TAU_BAR :
-                                                               ENT_PID_TAU;
+                                /* True decay process from a tau. */
+                                int mother;
+                                if (apid == ENT_PID_NU_TAU) {
+                                        mother = (daughter->pid > 0) ?
+                                            ENT_PID_TAU :
+                                            ENT_PID_TAU_BAR;
+                                } else {
+                                        mother = (daughter->pid > 0) ?
+                                            ENT_PID_TAU_BAR :
+                                            ENT_PID_TAU;
+                                }
+                                ancestor_decay(context, daughter, mother,
+                                    medium->A, density, &np, proget_v, p,
+                                    ancestor_v);
                         }
-                        ancestor_decay(context, daughter, mother, medium->A,
-                            density, &np, proget_v, p, ancestor_v);
                 }
         } else if ((apid == ENT_PID_ELECTRON) || (apid == ENT_PID_MUON) ||
             (apid == ENT_PID_TAU)) {
