@@ -1273,7 +1273,7 @@ static int cross_section_prepare(struct ent_physics * physics, double energy,
                 *cs0 = physics->cs + (ENERGY_N - 2) * (PROGET_N - 1);
                 *cs1 = physics->cs + (ENERGY_N - 1) * (PROGET_N - 1);
                 *p1 = (ENERGY_N - 1) / log(ENERGY_MAX / ENERGY_MIN);
-                *p2 = energy / ENERGY_MIN;
+                *p2 = energy / ENERGY_MAX;
         } else {
                 /* Interpolation model. */
                 mode = 0;
@@ -1842,6 +1842,9 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
     struct ent_context * context, struct ent_state * state, int proget,
     double * E, double * Q2)
 {
+#define MIN_WEIGHT 1E-05
+#define MAX_WEIGHT 1E+03
+
         /* Sample y using a bias PDF. */
         const double alpha = 0.5;
         double ry, y;
@@ -1889,10 +1892,15 @@ static enum ent_return backward_sample_EQ2(struct ent_physics * physics,
 
         /* Check and update the BMC weight. */
         const double w = pdf1 / (pdf0 * (1. - y));
-        if (w <= 0.) return ENT_RETURN_DOMAIN_ERROR;
+        if ((w < MIN_WEIGHT) || (w > MAX_WEIGHT)) {
+                return ENT_RETURN_DOMAIN_ERROR;
+        }
         state->weight *= w;
 
         return ENT_RETURN_SUCCESS;
+
+#undef MIN_WEIGHT
+#undef MAX_WEIGHT
 }
 
 /* Sample the inelasticity, _y_, for an interaction with an electron. The
@@ -2358,7 +2366,7 @@ static enum ent_return transport_vertex_backward(struct ent_physics * physics,
                 /* Sample the energy loss. */
                 enum ent_return rc;
                 double Enu, Q2;
-                const int ntrials = 20;
+                const int ntrials = 100;
                 int i;
                 for (i = 0; i < ntrials; i++) {
                         if ((rc = backward_sample_EQ2(physics, context, state,
